@@ -1,0 +1,24 @@
+# Xcode / Swift build output
+.build/
+DerivedData/
+.swiftpm/
+*.xcuserstate
+
+# User-local Xcode state
+*.xcuserdata/
+xcuserdata/
+
+# macOS metadata
+.DS_Store
+
+# Local working memory and generated planning artifacts
+.workbuddy/
+deliverables/
+
+# Product / review / setup documents kept out of the MVP code snapshot
+PRD*.md
+*prd*.md
+*review*.md
+*评审*.md
+README.md
+SETUP.md

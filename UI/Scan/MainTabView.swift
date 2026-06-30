@@ -1,0 +1,51 @@
+import SwiftUI
+
+/// 主页面（扫描 + 结果，按年分桶版）
+struct MainTabView: View {
+    @EnvironmentObject var appState: AppState
+    @StateObject private var scanner = PhotoScanner()
+    @State private var showSettings = false
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Group {
+                switch scanner.state {
+                case .idle:
+                    ScanStartView(scanner: scanner)
+                case .scanning:
+                    ScanningView(scanner: scanner)
+                case .completed:
+                    if let results = scanner.currentResults {
+                        ResultsView(results: results, scanner: scanner)
+                    } else {
+                        ScanStartView(scanner: scanner)
+                    }
+                case .error(let message):
+                    ScanErrorView(message: message, scanner: scanner)
+                }
+            }
+
+            if scanner.state != .scanning {
+                Button(action: { showSettings = true }) {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(.sageDark)
+                        .frame(width: 40, height: 40)
+                        .background(.ultraThinMaterial, in: Circle())
+                }
+                .padding(.trailing, 16)
+                .padding(.top, 8)
+                .accessibilityLabel("设置")
+            }
+        }
+        .sheet(isPresented: $showSettings) {
+            SettingsView()
+                .environmentObject(appState)
+        }
+        .onAppear {
+            if scanner.availableYears.isEmpty {
+                scanner.detectAvailableYears()
+            }
+        }
+    }
+}
