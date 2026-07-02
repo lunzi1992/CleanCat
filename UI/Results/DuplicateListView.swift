@@ -112,7 +112,8 @@ struct DuplicateGroupCard: View {
                         PhotoThumbnailCell(
                             photo: photo,
                             isSelected: selectedPhotos.contains(photo.id),
-                            isKeep: photo.id == group.photos.first?.id
+                            isKeep: photo.id == group.photos.first?.id,
+                            showsSelectionControl: photo.id != group.photos.first?.id
                         ) {
                             toggleSelection(photo)
                         }

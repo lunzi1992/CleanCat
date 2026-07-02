@@ -5,6 +5,8 @@ struct CleanupResultView: View {
     let photoCount: Int
     let spaceFreed: Int64
     var failedCount: Int = 0
+    var bucketLabel: String? = nil
+    var onContinueNextYear: (() -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
     @State private var showShareSheet = false
@@ -48,7 +50,7 @@ struct CleanupResultView: View {
                 }
 
                 VStack(spacing: 16) {
-                    Text("整理完成！")
+                    Text(bucketLabel.map { "你的\($0)整理完毕" } ?? "整理完成！")
                         .font(.system(size: 28, weight: .bold, design: .rounded))
                         .foregroundColor(.sageDark)
 
@@ -108,8 +110,29 @@ struct CleanupResultView: View {
                             .shadow(color: Color.sage.opacity(0.3), radius: 10, y: 5)
                     }
 
+                    if let onContinue = onContinueNextYear {
+                        Button(action: {
+                            catHaptic(.light)
+                            dismiss()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                onContinue()
+                            }
+                        }) {
+                            HStack {
+                                Image(systemName: "arrow.right")
+                                Text("继续整理上一年")
+                            }
+                            .font(.subheadline)
+                            .foregroundColor(.sageDark)
+                        }
+                    }
+
                     Button(action: {
                         catHaptic(.light)
+                        AnalyticsManager.shared.track(
+                            .shareClicked,
+                            properties: ["photo_count": photoCount, "space_freed_mb": Int(spaceFreed / 1_048_576)]
+                        )
                         showShareSheet = true
                     }) {
                         HStack {

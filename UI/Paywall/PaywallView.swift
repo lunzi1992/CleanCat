@@ -223,8 +223,8 @@ struct PaywallView: View {
     private func purchase() {
         catHaptic(.medium)
         AnalyticsManager.shared.track(
-            .purchaseFailed,
-            properties: ["plan": selectedPlan.rawValue, "price": priceFor(selectedPlan)]
+            .purchaseInitiated,
+            properties: ["plan": selectedPlan.rawValue, "price": priceFor(selectedPlan), "storekit_available": false]
         )
         alertMessage = "内测版暂未接入 App Store 支付，高级功能不会模拟解锁。"
         showAlert = true

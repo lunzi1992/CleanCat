@@ -7,6 +7,7 @@ struct ResultsView: View {
     @State private var selectedTab: ResultTab = .duplicates
     @State private var showDeleteConfirm = false
     @State private var selectedPhotos: Set<String> = []
+    @State private var cleanupSummary: CleanupSummary?
 
     enum ResultTab: String, CaseIterable {
         case duplicates = "重复照片"
@@ -52,6 +53,24 @@ struct ResultsView: View {
                 handleDeleteResult(result)
             }
         }
+        .sheet(item: $cleanupSummary) { summary in
+            CleanupResultView(
+                photoCount: summary.photoCount,
+                spaceFreed: summary.spaceFreed,
+                failedCount: summary.failedCount,
+                bucketLabel: summary.bucketLabel,
+                onContinueNextYear: summary.nextBucket.map { nextBucket in
+                    {
+                        AnalyticsManager.shared.track(
+                            .rescanTriggered,
+                            properties: ["source": "continue_previous_year", "bucket": nextBucket.displayName]
+                        )
+                        selectedPhotos.removeAll()
+                        scanner.selectBucket(nextBucket)
+                    }
+                }
+            )
+        }
     }
 
     // MARK: - Header
@@ -71,13 +90,25 @@ struct ResultsView: View {
 
                 Spacer()
 
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text("可释放")
-                        .font(.caption)
-                        .foregroundColor(.warmGray)
-                    Text(formatBytes(results.totalReclaimableSpace))
-                        .font(.system(size: 20, weight: .bold, design: .rounded))
-                        .foregroundColor(.sage)
+                HStack(spacing: 12) {
+                    Button(action: rescanCurrentBucket) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(.sageDark)
+                            .frame(width: 36, height: 36)
+                            .background(Color.sage.opacity(0.12))
+                            .clipShape(Circle())
+                    }
+                    .accessibilityLabel("重新扫描")
+
+                    VStack(alignment: .trailing, spacing: 4) {
+                        Text("可释放")
+                            .font(.caption)
+                            .foregroundColor(.warmGray)
+                        Text(formatBytes(results.totalReclaimableSpace))
+                            .font(.system(size: 20, weight: .bold, design: .rounded))
+                            .foregroundColor(.sage)
+                    }
                 }
             }
             .padding(.horizontal, 20)
@@ -245,12 +276,60 @@ struct ResultsView: View {
     private func handleDeleteResult(_ result: DeleteManager.DeleteResult) {
         let failedIDs = Set(result.failedIDs)
         let deletedIDs = Set(selectedPhotos).subtracting(failedIDs)
+        let currentBucket = scanner.selectedBucket
+        let nextBucket = previousYearBucket(after: currentBucket)
 
         if !deletedIDs.isEmpty {
             scanner.removeDeletedPhotos(deletedIDs)
         }
 
         selectedPhotos.removeAll()
+
+        guard result.successCount > 0 else { return }
+
+        AnalyticsManager.shared.track(
+            .deleteCompleted,
+            properties: [
+                "photo_count": result.successCount,
+                "failed_count": result.failedCount,
+                "space_freed_mb": Int(result.freedSpace / 1_048_576),
+                "bucket": currentBucket?.displayName ?? "unknown"
+            ]
+        )
+
+        let summary = CleanupSummary(
+            photoCount: result.successCount,
+            spaceFreed: result.freedSpace,
+            failedCount: result.failedCount,
+            bucketLabel: currentBucket?.displayName,
+            nextBucket: nextBucket
+        )
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            cleanupSummary = summary
+        }
+    }
+
+    private func previousYearBucket(after bucket: YearBucket?) -> YearBucket? {
+        guard case .year(let year) = bucket,
+              let index = scanner.availableYears.firstIndex(of: year) else {
+            return nil
+        }
+
+        let nextIndex = scanner.availableYears.index(after: index)
+        guard scanner.availableYears.indices.contains(nextIndex) else { return nil }
+        return .year(scanner.availableYears[nextIndex])
+    }
+
+    private func rescanCurrentBucket() {
+        guard let bucket = scanner.selectedBucket else { return }
+        selectedPhotos.removeAll()
+        catHaptic(.medium)
+        AnalyticsManager.shared.track(
+            .rescanTriggered,
+            properties: ["source": "manual_result_header", "bucket": bucket.displayName]
+        )
+        scanner.selectBucket(bucket, forceRescan: true)
     }
 
     private func formatBytes(_ bytes: Int64) -> String {
@@ -258,4 +337,13 @@ struct ResultsView: View {
         formatter.countStyle = .file
         return formatter.string(fromByteCount: bytes)
     }
+}
+
+private struct CleanupSummary: Identifiable {
+    let id = UUID()
+    let photoCount: Int
+    let spaceFreed: Int64
+    let failedCount: Int
+    let bucketLabel: String?
+    let nextBucket: YearBucket?
 }

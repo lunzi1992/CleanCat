@@ -114,6 +114,7 @@ final class AnalyticsManager {
         case photoSelected = "photo_selected"
         case photoDeselected = "photo_deselected"
         case photoSelectAllTapped = "photo_select_all_tapped"
+        case bestPhotoPreviewExhausted = "best_photo_preview_exhausted"
 
         // 删除
         case deleteConfirmed = "delete_confirmed"
@@ -124,6 +125,7 @@ final class AnalyticsManager {
         case paywallViewed = "paywall_viewed"
         case paywallDismissed = "paywall_dismissed"
         case paywallPlanSelected = "paywall_plan_selected"
+        case purchaseInitiated = "purchase_initiated"
         case purchaseCompleted = "purchase_completed"
         case purchaseFailed = "purchase_failed"
         case purchaseCancelled = "purchase_cancelled"
@@ -131,6 +133,7 @@ final class AnalyticsManager {
 
         // 留存
         case rescanTriggered = "rescan_triggered"
+        case shareClicked = "share_clicked"
     }
 
     // MARK: - 上报接口

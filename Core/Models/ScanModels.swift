@@ -69,10 +69,12 @@ struct PhotoItem: Identifiable, Hashable {
     let pHash: UInt64?
     let isScreenshot: Bool
     let isScreenRecording: Bool
+    let isLivePhoto: Bool
     let fileSize: Int64
     let creationDate: Date?
     let pixelWidth: Int
     let pixelHeight: Int
+    let colorSignature: ColorSignature?
     var qualityScore: Double?
     var qualityReason: String?
     
@@ -83,6 +85,14 @@ struct PhotoItem: Identifiable, Hashable {
     static func == (lhs: PhotoItem, rhs: PhotoItem) -> Bool {
         lhs.id == rhs.id
     }
+}
+
+struct ColorSignature: Hashable {
+    let red: Double
+    let green: Double
+    let blue: Double
+    let saturation: Double
+    let brightness: Double
 }
 
 /// 完全重复照片组（MD5 相同）

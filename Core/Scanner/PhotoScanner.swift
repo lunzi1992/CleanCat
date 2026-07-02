@@ -430,6 +430,7 @@ final class PhotoScanner: ObservableObject {
     private nonisolated func processOneAsset(_ asset: PHAsset) async -> PhotoItem {
         let isScreenshot = asset.mediaSubtypes.contains(.photoScreenshot)
         let isScreenRecording = asset.mediaSubtypes.contains(.videoScreenRecording)
+        let isLivePhoto = asset.mediaSubtypes.contains(.photoLive)
 
         let resources = PHAssetResource.assetResources(for: asset)
         let fileSize = resources.first?.value(forKey: "fileSize") as? Int64 ?? 0
@@ -444,9 +445,11 @@ final class PhotoScanner: ObservableObject {
         let thumb = await requestThumbnail(asset: asset, size: CGSize(width: 256, height: 256), imageManager: imageManager, options: options)
 
         var pHashValue: UInt64? = nil
+        var colorSignature: ColorSignature? = nil
 
         if let img = thumb {
             pHashValue = SimilarityDetector.computePHash(from: img)
+            colorSignature = SimilarityDetector.computeColorSignature(from: img)
         }
 
         return PhotoItem(
@@ -456,10 +459,12 @@ final class PhotoScanner: ObservableObject {
             pHash: pHashValue,
             isScreenshot: isScreenshot,
             isScreenRecording: isScreenRecording,
+            isLivePhoto: isLivePhoto,
             fileSize: fileSize,
             creationDate: asset.creationDate,
             pixelWidth: asset.pixelWidth,
             pixelHeight: asset.pixelHeight,
+            colorSignature: colorSignature,
             qualityScore: nil,
             qualityReason: nil
         )
@@ -480,7 +485,7 @@ final class PhotoScanner: ObservableObject {
     }
 
     private func duplicateCandidateIDs(in photos: [PhotoItem]) -> Set<String> {
-        let grouped = Dictionary(grouping: photos.filter { $0.asset.mediaType == .image && $0.fileSize > 0 }) { photo in
+        let grouped = Dictionary(grouping: photos.filter { $0.asset.mediaType == .image && !$0.isLivePhoto && $0.fileSize > 0 }) { photo in
             "\(photo.fileSize)-\(photo.pixelWidth)x\(photo.pixelHeight)"
         }
 

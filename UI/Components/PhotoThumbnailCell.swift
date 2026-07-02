@@ -8,6 +8,7 @@ struct PhotoThumbnailCell: View {
     var isKeep: Bool = false
     var isBest: Bool = false
     var bestReason: String? = nil
+    var showsSelectionControl: Bool = true
     let onTap: () -> Void
 
     @State private var thumbnail: UIImage?
@@ -46,16 +47,18 @@ struct PhotoThumbnailCell: View {
 
                     Spacer()
 
-                    Button(action: onTap) {
-                        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                            .font(.system(size: 24, weight: .semibold))
-                            .foregroundColor(isSelected ? .appDanger : .white)
-                            .shadow(radius: 1)
-                            .frame(width: 36, height: 36)
-                            .contentShape(Circle())
+                    if showsSelectionControl {
+                        Button(action: onTap) {
+                            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                                .font(.system(size: 24, weight: .semibold))
+                                .foregroundColor(isSelected ? .appDanger : .white)
+                                .shadow(radius: 1)
+                                .frame(width: 36, height: 36)
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(isSelected ? "取消选择" : "选择照片")
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(isSelected ? "取消选择" : "选择照片")
                 }
                 .padding(6)
 

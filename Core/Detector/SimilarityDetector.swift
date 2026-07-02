@@ -7,14 +7,23 @@ final class SimilarityDetector {
     
     /// 汉明距离阈值：≤ 此值的两张照片视为相似
     /// PRD V1.1 REQ-004：遵循"宁可漏判不可误判"原则
-    /// 初始阈值保守（≤8 而非 10），后续根据 delete_cancelled 埋点调优
-    static let hammingThreshold: Int = 8
+    /// 收紧阈值，避免只因天空/云朵等低频结构接近而误分组。
+    static let hammingThreshold: Int = 6
     
     /// 最小分组数量：相似组至少需要 2 张照片
     static let minGroupSize: Int = 2
 
     /// 单张照片最多向后比较的数量。避免大年份相册进入 O(n²) 假死。
     private static let maxForwardComparisons = 40
+
+    /// 相似照片通常来自连拍或同一段拍摄，跨太久宁可不合并。
+    private static let maxCaptureTimeGap: TimeInterval = 30 * 60
+
+    /// 平均颜色/饱和度/亮度距离阈值，用来拦截晚霞、蓝天、白云等场景级误判。
+    private static let maxColorDistance = 0.26
+
+    /// 宽高比允许轻微裁切差异，但不把横竖构图混成一组。
+    private static let maxAspectLogDistance = 0.12
     
     // MARK: - pHash 计算
     
@@ -101,6 +110,65 @@ final class SimilarityDetector {
         
         return hash
     }
+
+    static func computeColorSignature(from image: UIImage) -> ColorSignature? {
+        guard let cgImage = image.cgImage else { return nil }
+
+        let width = 16
+        let height = 16
+        let bytesPerPixel = 4
+        let bytesPerRow = width * bytesPerPixel
+        var pixels = [UInt8](repeating: 0, count: width * height * bytesPerPixel)
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+
+        let didDraw = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(
+                data: buffer.baseAddress,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: bytesPerRow,
+                space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else {
+                return false
+            }
+
+            context.interpolationQuality = .medium
+            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+
+        guard didDraw else { return nil }
+
+        var red = 0.0
+        var green = 0.0
+        var blue = 0.0
+        var saturation = 0.0
+        var brightness = 0.0
+        let pixelCount = Double(width * height)
+
+        for index in stride(from: 0, to: pixels.count, by: bytesPerPixel) {
+            let r = Double(pixels[index]) / 255.0
+            let g = Double(pixels[index + 1]) / 255.0
+            let b = Double(pixels[index + 2]) / 255.0
+            let hsv = rgbToHSV(red: r, green: g, blue: b)
+
+            red += r
+            green += g
+            blue += b
+            saturation += hsv.saturation
+            brightness += hsv.brightness
+        }
+
+        return ColorSignature(
+            red: red / pixelCount,
+            green: green / pixelCount,
+            blue: blue / pixelCount,
+            saturation: saturation / pixelCount,
+            brightness: brightness / pixelCount
+        )
+    }
     
     // MARK: - 汉明距离
     
@@ -120,78 +188,143 @@ final class SimilarityDetector {
     /// 检测相似照片并分组
     func detectSimilar(in photos: [PhotoItem]) -> [SimilarGroup] {
         // 只处理有 pHash 值的照片
-        let validPhotos = photos.filter { $0.pHash != nil && $0.asset.mediaType == .image }
+        let validPhotos = photos.filter { $0.pHash != nil && $0.asset.mediaType == .image && !$0.isLivePhoto }
         guard validPhotos.count >= SimilarityDetector.minGroupSize else { return [] }
         
         let sortedPhotos = validPhotos.sorted {
             ($0.creationDate ?? .distantPast) < ($1.creationDate ?? .distantPast)
         }
 
-        // 使用并查集（Union-Find）进行聚类。相似废片通常来自连拍/同一场景，按时间窗口比较。
-        let uf = UnionFind(sortedPhotos.count)
+        var adjacency = Array(repeating: Set<Int>(), count: sortedPhotos.count)
         
         for i in 0..<sortedPhotos.count {
             let upperBound = min(sortedPhotos.count, i + 1 + SimilarityDetector.maxForwardComparisons)
             guard i + 1 < upperBound else { continue }
 
             for j in (i + 1)..<upperBound {
-                guard let hashA = sortedPhotos[i].pHash,
-                      let hashB = sortedPhotos[j].pHash else { continue }
-                
-                let distance = SimilarityDetector.hammingDistance(hashA, hashB)
-                if distance <= SimilarityDetector.hammingThreshold {
-                    uf.union(i, j)
+                if let timeGap = captureTimeGap(sortedPhotos[i], sortedPhotos[j]),
+                   timeGap > SimilarityDetector.maxCaptureTimeGap {
+                    break
+                }
+
+                if arePairwiseSimilar(sortedPhotos[i], sortedPhotos[j]) {
+                    adjacency[i].insert(j)
+                    adjacency[j].insert(i)
                 }
             }
         }
-        
-        // 收集分组
-        var groupDict: [Int: [PhotoItem]] = [:]
-        for i in 0..<sortedPhotos.count {
-            let root = uf.find(i)
-            groupDict[root, default: []].append(sortedPhotos[i])
+
+        var visited = Set<Int>()
+        var groups: [[PhotoItem]] = []
+
+        for index in sortedPhotos.indices where !visited.contains(index) {
+            let component = collectComponent(from: index, adjacency: adjacency, visited: &visited)
+            guard component.count >= SimilarityDetector.minGroupSize else { continue }
+
+            let componentPhotos = component
+                .map { sortedPhotos[$0] }
+                .sorted { ($0.creationDate ?? .distantPast) < ($1.creationDate ?? .distantPast) }
+
+            groups.append(contentsOf: splitIntoCoherentGroups(componentPhotos))
         }
-        
-        // 过滤 ≥ minGroupSize 的组，按组大小降序
-        return groupDict
-            .filter { $0.value.count >= SimilarityDetector.minGroupSize }
-            .map { SimilarGroup(photos: $0.value) }
+
+        return groups
+            .filter { $0.count >= SimilarityDetector.minGroupSize }
+            .map { SimilarGroup(photos: $0) }
             .sorted { $0.photos.count > $1.photos.count }
     }
-}
 
-// MARK: - 并查集
-
-private final class UnionFind {
-    private var parent: [Int]
-    private var rank: [Int]
-    
-    init(_ n: Int) {
-        parent = Array(0..<n)
-        rank = Array(repeating: 0, count: n)
+    private static func rgbToHSV(red: Double, green: Double, blue: Double) -> (saturation: Double, brightness: Double) {
+        let maxValue = max(red, green, blue)
+        let minValue = min(red, green, blue)
+        let delta = maxValue - minValue
+        let saturation = maxValue == 0 ? 0 : delta / maxValue
+        return (saturation, maxValue)
     }
-    
-    func find(_ x: Int) -> Int {
-        if parent[x] != x {
-            parent[x] = find(parent[x])  // 路径压缩
+
+    private func arePairwiseSimilar(_ lhs: PhotoItem, _ rhs: PhotoItem) -> Bool {
+        guard let lhsHash = lhs.pHash,
+              let rhsHash = rhs.pHash else { return false }
+
+        let hashDistance = SimilarityDetector.hammingDistance(lhsHash, rhsHash)
+        guard hashDistance <= SimilarityDetector.hammingThreshold else { return false }
+        guard isCaptureTimeClose(lhs, rhs, hashDistance: hashDistance) else { return false }
+        guard isAspectRatioClose(lhs, rhs) else { return false }
+
+        if let lhsColor = lhs.colorSignature, let rhsColor = rhs.colorSignature {
+            return colorDistance(lhsColor, rhsColor) <= SimilarityDetector.maxColorDistance
         }
-        return parent[x]
+
+        return hashDistance <= 4
     }
-    
-    func union(_ x: Int, _ y: Int) {
-        let rootX = find(x)
-        let rootY = find(y)
-        
-        if rootX != rootY {
-            // 按秩合并
-            if rank[rootX] < rank[rootY] {
-                parent[rootX] = rootY
-            } else if rank[rootX] > rank[rootY] {
-                parent[rootY] = rootX
-            } else {
-                parent[rootY] = rootX
-                rank[rootX] += 1
+
+    private func isCaptureTimeClose(_ lhs: PhotoItem, _ rhs: PhotoItem, hashDistance: Int) -> Bool {
+        guard let gap = captureTimeGap(lhs, rhs) else {
+            return hashDistance <= 4
+        }
+        return gap <= SimilarityDetector.maxCaptureTimeGap
+    }
+
+    private func captureTimeGap(_ lhs: PhotoItem, _ rhs: PhotoItem) -> TimeInterval? {
+        guard let lhsDate = lhs.creationDate, let rhsDate = rhs.creationDate else { return nil }
+        return abs(lhsDate.timeIntervalSince(rhsDate))
+    }
+
+    private func isAspectRatioClose(_ lhs: PhotoItem, _ rhs: PhotoItem) -> Bool {
+        guard lhs.pixelWidth > 0, lhs.pixelHeight > 0, rhs.pixelWidth > 0, rhs.pixelHeight > 0 else {
+            return true
+        }
+
+        let lhsAspect = Double(lhs.pixelWidth) / Double(lhs.pixelHeight)
+        let rhsAspect = Double(rhs.pixelWidth) / Double(rhs.pixelHeight)
+        return abs(log(lhsAspect / rhsAspect)) <= SimilarityDetector.maxAspectLogDistance
+    }
+
+    private func colorDistance(_ lhs: ColorSignature, _ rhs: ColorSignature) -> Double {
+        let red = lhs.red - rhs.red
+        let green = lhs.green - rhs.green
+        let blue = lhs.blue - rhs.blue
+        let saturation = lhs.saturation - rhs.saturation
+        let brightness = lhs.brightness - rhs.brightness
+
+        return sqrt(
+            red * red * 0.24 +
+            green * green * 0.24 +
+            blue * blue * 0.24 +
+            saturation * saturation * 0.14 +
+            brightness * brightness * 0.14
+        )
+    }
+
+    private func collectComponent(from start: Int, adjacency: [Set<Int>], visited: inout Set<Int>) -> [Int] {
+        var stack = [start]
+        var component: [Int] = []
+        visited.insert(start)
+
+        while let index = stack.popLast() {
+            component.append(index)
+            for neighbor in adjacency[index] where !visited.contains(neighbor) {
+                visited.insert(neighbor)
+                stack.append(neighbor)
             }
         }
+
+        return component
+    }
+
+    private func splitIntoCoherentGroups(_ photos: [PhotoItem]) -> [[PhotoItem]] {
+        var groups: [[PhotoItem]] = []
+
+        for photo in photos {
+            if let groupIndex = groups.firstIndex(where: { group in
+                group.allSatisfy { arePairwiseSimilar($0, photo) }
+            }) {
+                groups[groupIndex].append(photo)
+            } else {
+                groups.append([photo])
+            }
+        }
+
+        return groups.filter { $0.count >= SimilarityDetector.minGroupSize }
     }
 }

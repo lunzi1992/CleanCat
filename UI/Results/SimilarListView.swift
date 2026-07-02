@@ -7,6 +7,7 @@ struct SimilarListView: View {
     @Binding var selectedPhotos: Set<String>
     @EnvironmentObject var appState: AppState
     @State private var showPaywall = false
+    @State private var didTrackPreviewExhausted = false
 
     /// freemium 阈值:前 3 组可看建议保留
     private let freeThreshold = 3
@@ -17,7 +18,7 @@ struct SimilarListView: View {
                 if groups.isEmpty {
                     EmptyStateView(
                         icon: "rectangle.3.group",
-                        title: "没有相似照片",
+                        title: "没有可能相似的照片",
                         subtitle: "这一年保留下来的都挺不一样"
                     )
                 } else {
@@ -48,6 +49,15 @@ struct SimilarListView: View {
                             lockedReason: (!appState.isPro && index >= freeThreshold) ? "升级后显示建议" : nil
                         ) {
                             showPaywall = true
+                        }
+                        .onAppear {
+                            if !appState.isPro && index == freeThreshold && !didTrackPreviewExhausted {
+                                didTrackPreviewExhausted = true
+                                AnalyticsManager.shared.track(
+                                    .bestPhotoPreviewExhausted,
+                                    properties: ["free_group_count": freeThreshold, "group_count": groups.count]
+                                )
+                            }
                         }
                     }
 
@@ -150,7 +160,7 @@ struct SimilarGroupCard: View {
                         .foregroundColor(.sage)
 
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("\(group.photos.count) 张相似照片")
+                        Text("\(group.photos.count) 张可能相似")
                             .font(.subheadline)
                             .fontWeight(.medium)
                         Text("可释放 \(formatBytes(group.reclaimableSpace))")
