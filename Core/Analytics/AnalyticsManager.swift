@@ -7,6 +7,7 @@ import UIKit
 /// - V1.0 阶段先本地日志,后续可对接第三方 (Firebase / Sentry / 自建)
 final class AnalyticsManager {
     static let shared = AnalyticsManager()
+    static let optOutKey = "opt_out_analytics"
 
     private let queue = DispatchQueue(label: "com.cleancat.analytics", qos: .utility)
     private let dateFormatter: ISO8601DateFormatter = {
@@ -24,6 +25,10 @@ final class AnalyticsManager {
         UserDefaults.standard.set(new, forKey: "anon_id")
         return new
     }()
+
+    private init() {
+        Self.removeLegacyDocumentLog()
+    }
 
     /// 相册规模分桶
     enum PhotoLibrarySizeBucket: String {
@@ -106,6 +111,9 @@ final class AnalyticsManager {
         case resultPageViewed = "result_page_viewed"
         case resultTabSwitched = "result_tab_switched"
         case resultEmptyViewed = "result_empty_viewed"
+        case photoSelected = "photo_selected"
+        case photoDeselected = "photo_deselected"
+        case photoSelectAllTapped = "photo_select_all_tapped"
 
         // 删除
         case deleteConfirmed = "delete_confirmed"
@@ -127,6 +135,18 @@ final class AnalyticsManager {
 
     // MARK: - 上报接口
 
+    var isOptedOut: Bool {
+        get { UserDefaults.standard.bool(forKey: Self.optOutKey) }
+        set {
+            UserDefaults.standard.set(newValue, forKey: Self.optOutKey)
+            if newValue {
+                queue.async {
+                    Self.purgeLocalLogs()
+                }
+            }
+        }
+    }
+
     /// 上报事件
     /// - Parameters:
     ///   - event: 事件名
@@ -138,6 +158,8 @@ final class AnalyticsManager {
         bucket: PhotoLibrarySizeBucket? = nil,
         isFirstSession: Bool = false
     ) {
+        guard !isOptedOut else { return }
+
         let timeSinceLaunch = SessionTracker.shared.millisecondsSinceLaunch
         let common = CommonProperties.current(
             bucket: bucket?.rawValue,
@@ -200,8 +222,31 @@ final class AnalyticsManager {
     }
 
     private static func logFileURL() -> URL {
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        return docs.appendingPathComponent("analytics.log")
+        let manager = FileManager.default
+        let caches = manager.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? manager.temporaryDirectory
+        let directory = caches.appendingPathComponent("Analytics", isDirectory: true)
+        try? manager.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory.appendingPathComponent("analytics.log")
+    }
+
+    private static func purgeLocalLogs() {
+        let manager = FileManager.default
+        try? manager.removeItem(at: logFileURL())
+        if let legacyURL = legacyDocumentLogURL() {
+            try? manager.removeItem(at: legacyURL)
+        }
+    }
+
+    private static func removeLegacyDocumentLog() {
+        guard let legacyURL = legacyDocumentLogURL() else { return }
+        try? FileManager.default.removeItem(at: legacyURL)
+    }
+
+    private static func legacyDocumentLogURL() -> URL? {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
+            .first?
+            .appendingPathComponent("analytics.log")
     }
 }
 
@@ -212,9 +257,10 @@ final class SessionTracker {
 
     private let launchTimestamp: Date = Date()
     private(set) var currentSessionId: String = "s_" + UUID().uuidString.lowercased()
+    private let firstSession: Bool
 
     var isFirstSession: Bool {
-        !UserDefaults.standard.bool(forKey: "has_launched_before")
+        firstSession
     }
 
     var millisecondsSinceLaunch: Int {
@@ -222,6 +268,7 @@ final class SessionTracker {
     }
 
     private init() {
+        firstSession = !UserDefaults.standard.bool(forKey: "has_launched_before")
         UserDefaults.standard.set(true, forKey: "has_launched_before")
     }
 }

@@ -91,7 +91,7 @@ struct PaywallView: View {
                 .font(.system(size: 24, weight: .bold, design: .rounded))
                 .foregroundColor(.sageDark)
 
-            Text("解锁 AI 最佳推荐，更智能地管理照片")
+            Text("解锁全量建议保留，更轻松地管理照片")
                 .font(.subheadline)
                 .foregroundColor(.warmGray)
                 .multilineTextAlignment(.center)
@@ -111,11 +111,11 @@ struct PaywallView: View {
             Divider()
             FeatureRow(feature: "批量删除", free: true, pro: true)
             Divider()
-            FeatureRow(feature: "最佳推荐（前3组预览）", free: true, pro: true)
+            FeatureRow(feature: "建议保留（前3组预览）", free: true, pro: true)
             Divider()
-            FeatureRow(feature: "最佳推荐（全量）", free: false, pro: true)
+            FeatureRow(feature: "建议保留（全量）", free: false, pro: true)
             Divider()
-            FeatureRow(feature: "一键保留最佳", free: false, pro: true)
+            FeatureRow(feature: "一键保留建议", free: false, pro: true)
             Divider()
             FeatureRow(feature: "可解释推荐文案", free: true, pro: true)
         }

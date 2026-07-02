@@ -44,6 +44,10 @@ struct DuplicateListView: View {
     }
 
     private func selectAll() {
+        AnalyticsManager.shared.track(
+            .photoSelectAllTapped,
+            properties: ["source": "duplicates", "group_count": groups.count]
+        )
         for group in groups {
             for photo in group.photos.dropFirst() {
                 selectedPhotos.insert(photo.id)
@@ -142,8 +146,16 @@ struct DuplicateGroupCard: View {
         guard photo.id != group.photos.first?.id else { return }
         if selectedPhotos.contains(photo.id) {
             selectedPhotos.remove(photo.id)
+            AnalyticsManager.shared.track(
+                .photoDeselected,
+                properties: ["source": "duplicates", "photo_id": photo.id]
+            )
         } else {
             selectedPhotos.insert(photo.id)
+            AnalyticsManager.shared.track(
+                .photoSelected,
+                properties: ["source": "duplicates", "photo_id": photo.id]
+            )
         }
     }
 

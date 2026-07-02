@@ -81,6 +81,14 @@ struct ScreenshotListView: View {
     }
 
     private func selectAll() {
+        AnalyticsManager.shared.track(
+            .photoSelectAllTapped,
+            properties: [
+                "source": "screenshots",
+                "photo_count": screenshots.count,
+                "recording_count": recordings.count
+            ]
+        )
         for photo in screenshots {
             selectedPhotos.insert(photo.id)
         }
@@ -92,8 +100,16 @@ struct ScreenshotListView: View {
     private func toggleSelection(_ photo: PhotoItem) {
         if selectedPhotos.contains(photo.id) {
             selectedPhotos.remove(photo.id)
+            AnalyticsManager.shared.track(
+                .photoDeselected,
+                properties: ["source": photo.isScreenRecording ? "screen_recording" : "screenshot", "photo_id": photo.id]
+            )
         } else {
             selectedPhotos.insert(photo.id)
+            AnalyticsManager.shared.track(
+                .photoSelected,
+                properties: ["source": photo.isScreenRecording ? "screen_recording" : "screenshot", "photo_id": photo.id]
+            )
         }
     }
 }

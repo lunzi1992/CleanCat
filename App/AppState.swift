@@ -13,10 +13,14 @@ final class AppState: ObservableObject {
     @Published var isPro: Bool {
         didSet { UserDefaults.standard.set(isPro, forKey: "is_pro") }
     }
+    @Published var isAnalyticsOptedOut: Bool {
+        didSet { AnalyticsManager.shared.isOptedOut = isAnalyticsOptedOut }
+    }
     
     init() {
         self.hasCompletedOnboarding = UserDefaults.standard.bool(forKey: "has_completed_onboarding")
         self.isPro = UserDefaults.standard.bool(forKey: "is_pro")
+        self.isAnalyticsOptedOut = AnalyticsManager.shared.isOptedOut
         self.authorizationStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
     }
 }

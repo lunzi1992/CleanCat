@@ -56,40 +56,58 @@ struct SettingsView: View {
                     }
                     .foregroundColor(.primary)
                 }
+
+                Section("隐私") {
+                    Toggle(isOn: $appState.isAnalyticsOptedOut) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("关闭诊断数据")
+                            Text("关闭后，轻猫不会写入本地使用日志")
+                                .font(.caption)
+                                .foregroundColor(.warmGray)
+                        }
+                    }
+
+                    Button(action: openSettings) {
+                        HStack {
+                            Image(systemName: "slider.horizontal.3")
+                                .foregroundColor(.sage)
+                            Text("管理相册权限")
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundColor(.warmGray)
+                        }
+                    }
+                    .foregroundColor(.primary)
+                }
                 
                 // 关于
                 Section("关于") {
                     HStack {
                         Text("版本")
                         Spacer()
-                        Text("1.0.0")
+                        Text(appVersion)
                             .foregroundColor(.warmGray)
                     }
                     
-                    Link(destination: URL(string: "https://example.com/privacy")!) {
-                        HStack {
-                            Image(systemName: "hand.raised")
-                                .foregroundColor(.sage)
-                            Text("隐私政策")
-                            Spacer()
-                            Image(systemName: "arrow.up.forward.app")
-                                .font(.caption)
-                                .foregroundColor(.warmGray)
-                        }
-                        .foregroundColor(.primary)
+                    HStack {
+                        Image(systemName: "hand.raised")
+                            .foregroundColor(.sage)
+                        Text("隐私政策")
+                        Spacer()
+                        Text("准备中")
+                            .font(.caption)
+                            .foregroundColor(.warmGray)
                     }
                     
-                    Link(destination: URL(string: "https://example.com/terms")!) {
-                        HStack {
-                            Image(systemName: "doc.text")
-                                .foregroundColor(.sage)
-                            Text("使用条款")
-                            Spacer()
-                            Image(systemName: "arrow.up.forward.app")
-                                .font(.caption)
-                                .foregroundColor(.warmGray)
-                        }
-                        .foregroundColor(.primary)
+                    HStack {
+                        Image(systemName: "doc.text")
+                            .foregroundColor(.sage)
+                        Text("使用条款")
+                        Spacer()
+                        Text("准备中")
+                            .font(.caption)
+                            .foregroundColor(.warmGray)
                     }
                 }
                 
@@ -123,5 +141,18 @@ struct SettingsView: View {
     
     private func sendFeedback() {
         // TODO: 集成反馈功能
+    }
+
+    private var appVersion: String {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String
+        switch (version, build) {
+        case let (.some(version), .some(build)):
+            return "\(version) (\(build))"
+        case let (.some(version), .none):
+            return version
+        default:
+            return "1.0.0"
+        }
     }
 }

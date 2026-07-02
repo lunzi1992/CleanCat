@@ -1,14 +1,14 @@
 import SwiftUI
 
 /// 相似照片列表
-/// PRD V1.1 REQ-010: 前 3 组免费预览最佳推荐,第 4 组起需付费解锁
+/// PRD V1.1 REQ-010: 前 3 组免费预览建议保留,第 4 组起需付费解锁
 struct SimilarListView: View {
     let groups: [SimilarGroup]
     @Binding var selectedPhotos: Set<String>
     @EnvironmentObject var appState: AppState
     @State private var showPaywall = false
 
-    /// freemium 阈值:前 3 组可看最佳推荐
+    /// freemium 阈值:前 3 组可看建议保留
     private let freeThreshold = 3
 
     var body: some View {
@@ -24,7 +24,7 @@ struct SimilarListView: View {
                     Button(action: handleBestSelection) {
                         HStack {
                             Image(systemName: "sparkles")
-                            Text(appState.isPro ? "保留最佳，选中其余" : "保留最佳，删除其余")
+                            Text(appState.isPro ? "保留建议，选中其余" : "查看建议保留")
                             Spacer()
                             if appState.isPro {
                                 Text("\(totalDeletableCount()) 张")
@@ -45,14 +45,14 @@ struct SimilarListView: View {
                             group: group,
                             selectedPhotos: $selectedPhotos,
                             showsBestRecommendation: appState.isPro || index < freeThreshold,
-                            lockedReason: (!appState.isPro && index >= freeThreshold) ? "升级后显示最佳推荐" : nil
+                            lockedReason: (!appState.isPro && index >= freeThreshold) ? "升级后显示建议" : nil
                         ) {
                             showPaywall = true
                         }
                     }
 
                     if !appState.isPro && groups.count > freeThreshold {
-                        Text("前 3 组免费显示最佳推荐，其余组可继续浏览，升级后解锁全量推荐与一键保留最佳。")
+                        Text("前 3 组免费显示建议保留，其余组可继续浏览，升级后解锁全量建议与一键保留建议。")
                             .font(.caption)
                             .foregroundColor(.warmGray)
                             .multilineTextAlignment(.center)
@@ -77,6 +77,10 @@ struct SimilarListView: View {
     }
 
     private func selectAllExceptBest() {
+        AnalyticsManager.shared.track(
+            .photoSelectAllTapped,
+            properties: ["source": "similar", "group_count": groups.count]
+        )
         for group in groups {
             let sorted = group.photos.sorted { ($0.qualityScore ?? 0) > ($1.qualityScore ?? 0) }
             for photo in sorted.dropFirst() {
@@ -129,14 +133,7 @@ struct SimilarGroupCard: View {
         self.sortedPhotos = sorted
         self.bestPhotoID = sorted.first?.id
 
-        let score = sorted.first?.qualityScore
-        if let score, score >= 80 {
-            self.bestReasonText = "综合最佳"
-        } else if let score, score >= 60 {
-            self.bestReasonText = "质量较好"
-        } else {
-            self.bestReasonText = "推荐保留"
-        }
+        self.bestReasonText = sorted.first?.qualityReason ?? "建议保留"
     }
 
     var body: some View {
@@ -233,8 +230,16 @@ struct SimilarGroupCard: View {
     private func toggleSelection(_ photo: PhotoItem) {
         if selectedPhotos.contains(photo.id) {
             selectedPhotos.remove(photo.id)
+            AnalyticsManager.shared.track(
+                .photoDeselected,
+                properties: ["source": "similar", "photo_id": photo.id]
+            )
         } else {
             selectedPhotos.insert(photo.id)
+            AnalyticsManager.shared.track(
+                .photoSelected,
+                properties: ["source": "similar", "photo_id": photo.id]
+            )
         }
     }
 

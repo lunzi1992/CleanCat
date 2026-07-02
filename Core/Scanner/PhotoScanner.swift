@@ -265,7 +265,12 @@ final class PhotoScanner: ObservableObject {
             }.value
             try Task.checkCancellation()
 
-            similarGroups = applyLightweightScores(in: similarGroups)
+            await MainActor.run {
+                guard self.isActiveScan(scanID) else { return }
+                self.scanStatusText = "正在评估建议保留照片..."
+            }
+
+            similarGroups = await applyQualityScores(in: similarGroups, scanID: scanID)
 
             // 阶段 6: 截图与录屏分类
             let screenshots = photos.filter { $0.isScreenshot }
@@ -455,7 +460,8 @@ final class PhotoScanner: ObservableObject {
             creationDate: asset.creationDate,
             pixelWidth: asset.pixelWidth,
             pixelHeight: asset.pixelHeight,
-            qualityScore: nil
+            qualityScore: nil,
+            qualityReason: nil
         )
     }
 
@@ -571,20 +577,134 @@ final class PhotoScanner: ObservableObject {
         }
     }
 
-    // MARK: - 轻量最佳推荐评分
+    // MARK: - 建议保留评分
 
-    private func applyLightweightScores(in groups: [SimilarGroup]) -> [SimilarGroup] {
-        groups.map { group in
+    private func applyQualityScores(in groups: [SimilarGroup], scanID: UUID) async -> [SimilarGroup] {
+        let assessments = await computeQualityAssessments(for: groups.flatMap(\.photos), scanID: scanID)
+
+        return groups.map { group in
             let enriched = group.photos.map { photo -> PhotoItem in
-                var p = photo
-                p.qualityScore = lightweightQualityScore(for: photo)
-                return p
+                var updated = photo
+                if let assessment = assessments[photo.id] {
+                    updated.qualityScore = assessment.score
+                    updated.qualityReason = assessment.reason
+                } else {
+                    updated.qualityScore = fallbackQualityScore(for: photo)
+                    updated.qualityReason = "建议保留"
+                }
+                return updated
             }
             return SimilarGroup(photos: enriched)
         }
     }
 
-    private func lightweightQualityScore(for photo: PhotoItem) -> Double {
+    private func computeQualityAssessments(for photos: [PhotoItem], scanID: UUID) async -> [String: PhotoQualityScorer.Assessment] {
+        let uniquePhotos = Array(Dictionary(grouping: photos, by: \.id).compactMap { $0.value.first })
+        let maxConcurrent = 2
+        var result: [String: PhotoQualityScorer.Assessment] = [:]
+
+        await withTaskGroup(of: (String, PhotoQualityScorer.Assessment?).self) { group in
+            var iterator = uniquePhotos.makeIterator()
+            var inFlight = 0
+
+            while inFlight < maxConcurrent, let photo = iterator.next() {
+                inFlight += 1
+                group.addTask { [weak self] in
+                    guard let self else { return (photo.id, nil) }
+                    guard let image = await self.requestQualityImage(for: photo.asset) else {
+                        return (photo.id, nil)
+                    }
+                    return (photo.id, await PhotoQualityScorer.assess(image))
+                }
+            }
+
+            for await (id, assessment) in group {
+                inFlight -= 1
+
+                if Task.isCancelled || !isActiveScan(scanID) {
+                    group.cancelAll()
+                    break
+                }
+
+                if let assessment {
+                    result[id] = assessment
+                }
+
+                if let photo = iterator.next() {
+                    inFlight += 1
+                    group.addTask { [weak self] in
+                        guard let self else { return (photo.id, nil) }
+                        guard let image = await self.requestQualityImage(for: photo.asset) else {
+                            return (photo.id, nil)
+                        }
+                        return (photo.id, await PhotoQualityScorer.assess(image))
+                    }
+                }
+            }
+        }
+
+        return result
+    }
+
+    private nonisolated func requestQualityImage(for asset: PHAsset) async -> UIImage? {
+        let options = PHImageRequestOptions()
+        options.deliveryMode = .highQualityFormat
+        options.resizeMode = .fast
+        options.isSynchronous = false
+        options.isNetworkAccessAllowed = false
+
+        let longestSide = max(asset.pixelWidth, asset.pixelHeight)
+        let scale = longestSide > 0 ? min(1, 900 / CGFloat(longestSide)) : 1
+        let targetSize = CGSize(
+            width: max(320, CGFloat(asset.pixelWidth) * scale),
+            height: max(320, CGFloat(asset.pixelHeight) * scale)
+        )
+
+        return await withCheckedContinuation { continuation in
+            let lock = NSLock()
+            var didResume = false
+            var requestID: PHImageRequestID?
+
+            func resume(_ image: UIImage?) {
+                lock.lock()
+                defer { lock.unlock() }
+                guard !didResume else { return }
+                didResume = true
+                continuation.resume(returning: image)
+            }
+
+            requestID = PHImageManager.default().requestImage(
+                for: asset,
+                targetSize: targetSize,
+                contentMode: .aspectFit,
+                options: options
+            ) { image, info in
+                if let cancelled = info?[PHImageCancelledKey] as? Bool, cancelled {
+                    return
+                }
+                if let degraded = info?[PHImageResultIsDegradedKey] as? Bool, degraded {
+                    return
+                }
+                resume(image)
+            }
+
+            Task {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                lock.lock()
+                let shouldCancel = !didResume
+                let id = requestID
+                lock.unlock()
+                if shouldCancel {
+                    if let id {
+                        PHImageManager.default().cancelImageRequest(id)
+                    }
+                    resume(nil)
+                }
+            }
+        }
+    }
+
+    private func fallbackQualityScore(for photo: PhotoItem) -> Double {
         let megapixels = Double(photo.pixelWidth * photo.pixelHeight) / 1_000_000
         let resolutionScore = min(45, megapixels * 5)
 

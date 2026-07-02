@@ -18,7 +18,7 @@ struct ScanResults {
             space += group.photos.dropFirst().reduce(0) { $0 + $1.fileSize }
         }
         for group in similarGroups {
-            // 默认保留最佳一张，其余可删
+            // 默认保留建议保留的一张，其余可删
             let sorted = group.photos.sorted { ($0.qualityScore ?? 0) > ($1.qualityScore ?? 0) }
             space += sorted.dropFirst().reduce(0) { $0 + $1.fileSize }
         }
@@ -73,7 +73,8 @@ struct PhotoItem: Identifiable, Hashable {
     let creationDate: Date?
     let pixelWidth: Int
     let pixelHeight: Int
-    var qualityScore: Double?  // 仅付费用户计算
+    var qualityScore: Double?
+    var qualityReason: String?
     
     func hash(into hasher: inout Hasher) {
         hasher.combine(id)
