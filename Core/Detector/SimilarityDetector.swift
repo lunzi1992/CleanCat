@@ -8,7 +8,7 @@ final class SimilarityDetector {
     /// 汉明距离阈值：≤ 此值的两张照片视为相似
     /// PRD V1.1 REQ-004：遵循"宁可漏判不可误判"原则
     /// 收紧阈值，避免只因天空/云朵等低频结构接近而误分组。
-    static let hammingThreshold: Int = 6
+    static let hammingThreshold: Int = 5
     
     /// 最小分组数量：相似组至少需要 2 张照片
     static let minGroupSize: Int = 2
@@ -17,10 +17,10 @@ final class SimilarityDetector {
     private static let maxForwardComparisons = 40
 
     /// 相似照片通常来自连拍或同一段拍摄，跨太久宁可不合并。
-    private static let maxCaptureTimeGap: TimeInterval = 30 * 60
+    private static let maxCaptureTimeGap: TimeInterval = 10 * 60
 
     /// 平均颜色/饱和度/亮度距离阈值，用来拦截晚霞、蓝天、白云等场景级误判。
-    private static let maxColorDistance = 0.26
+    private static let maxColorDistance = 0.18
 
     /// 宽高比允许轻微裁切差异，但不把横竖构图混成一组。
     private static let maxAspectLogDistance = 0.12
@@ -129,7 +129,7 @@ final class SimilarityDetector {
                 bitsPerComponent: 8,
                 bytesPerRow: bytesPerRow,
                 space: colorSpace,
-                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
             ) else {
                 return false
             }
@@ -147,18 +147,41 @@ final class SimilarityDetector {
         var saturation = 0.0
         var brightness = 0.0
         let pixelCount = Double(width * height)
+        var tileSums = [Double](repeating: 0, count: 3 * 3 * 3)
+        var tileCounts = [Double](repeating: 0, count: 3 * 3)
 
-        for index in stride(from: 0, to: pixels.count, by: bytesPerPixel) {
-            let r = Double(pixels[index]) / 255.0
-            let g = Double(pixels[index + 1]) / 255.0
-            let b = Double(pixels[index + 2]) / 255.0
-            let hsv = rgbToHSV(red: r, green: g, blue: b)
+        for y in 0..<height {
+            for x in 0..<width {
+                let index = (y * width + x) * bytesPerPixel
+                let r = Double(pixels[index]) / 255.0
+                let g = Double(pixels[index + 1]) / 255.0
+                let b = Double(pixels[index + 2]) / 255.0
+                let hsv = rgbToHSV(red: r, green: g, blue: b)
+                let tileX = min(2, x * 3 / width)
+                let tileY = min(2, y * 3 / height)
+                let tileIndex = tileY * 3 + tileX
+                let sumIndex = tileIndex * 3
 
-            red += r
-            green += g
-            blue += b
-            saturation += hsv.saturation
-            brightness += hsv.brightness
+                red += r
+                green += g
+                blue += b
+                saturation += hsv.saturation
+                brightness += hsv.brightness
+                tileSums[sumIndex] += r
+                tileSums[sumIndex + 1] += g
+                tileSums[sumIndex + 2] += b
+                tileCounts[tileIndex] += 1
+            }
+        }
+
+        var tileAverages: [Double] = []
+        tileAverages.reserveCapacity(tileSums.count)
+        for tileIndex in 0..<tileCounts.count {
+            let count = max(1, tileCounts[tileIndex])
+            let sumIndex = tileIndex * 3
+            tileAverages.append(tileSums[sumIndex] / count)
+            tileAverages.append(tileSums[sumIndex + 1] / count)
+            tileAverages.append(tileSums[sumIndex + 2] / count)
         }
 
         return ColorSignature(
@@ -166,7 +189,8 @@ final class SimilarityDetector {
             green: green / pixelCount,
             blue: blue / pixelCount,
             saturation: saturation / pixelCount,
-            brightness: brightness / pixelCount
+            brightness: brightness / pixelCount,
+            tileAverages: tileAverages
         )
     }
     
@@ -255,7 +279,7 @@ final class SimilarityDetector {
             return colorDistance(lhsColor, rhsColor) <= SimilarityDetector.maxColorDistance
         }
 
-        return hashDistance <= 4
+        return hashDistance <= 3
     }
 
     private func isCaptureTimeClose(_ lhs: PhotoItem, _ rhs: PhotoItem, hashDistance: Int) -> Bool {
@@ -286,14 +310,25 @@ final class SimilarityDetector {
         let blue = lhs.blue - rhs.blue
         let saturation = lhs.saturation - rhs.saturation
         let brightness = lhs.brightness - rhs.brightness
+        let tileDistance = colorTileDistance(lhs.tileAverages, rhs.tileAverages)
 
-        return sqrt(
+        let globalDistance = sqrt(
             red * red * 0.24 +
             green * green * 0.24 +
             blue * blue * 0.24 +
             saturation * saturation * 0.14 +
             brightness * brightness * 0.14
         )
+        return max(globalDistance, tileDistance)
+    }
+
+    private func colorTileDistance(_ lhs: [Double], _ rhs: [Double]) -> Double {
+        guard lhs.count == rhs.count, !lhs.isEmpty else { return 0 }
+        let total = zip(lhs, rhs).reduce(0.0) { partial, pair in
+            let delta = pair.0 - pair.1
+            return partial + delta * delta
+        }
+        return sqrt(total / Double(lhs.count))
     }
 
     private func collectComponent(from start: Int, adjacency: [Set<Int>], visited: inout Set<Int>) -> [Int] {

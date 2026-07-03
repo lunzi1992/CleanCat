@@ -668,16 +668,19 @@ final class PhotoScanner: ObservableObject {
         )
 
         return await withCheckedContinuation { continuation in
-            let lock = NSLock()
+            let stateQueue = DispatchQueue(label: "cleancat.quality-image-request")
             var didResume = false
             var requestID: PHImageRequestID?
 
             func resume(_ image: UIImage?) {
-                lock.lock()
-                defer { lock.unlock() }
-                guard !didResume else { return }
-                didResume = true
-                continuation.resume(returning: image)
+                let shouldResume = stateQueue.sync { () -> Bool in
+                    guard !didResume else { return false }
+                    didResume = true
+                    return true
+                }
+                if shouldResume {
+                    continuation.resume(returning: image)
+                }
             }
 
             requestID = PHImageManager.default().requestImage(
@@ -697,10 +700,9 @@ final class PhotoScanner: ObservableObject {
 
             Task {
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
-                lock.lock()
-                let shouldCancel = !didResume
-                let id = requestID
-                lock.unlock()
+                let (shouldCancel, id) = stateQueue.sync {
+                    (!didResume, requestID)
+                }
                 if shouldCancel {
                     if let id {
                         PHImageManager.default().cancelImageRequest(id)

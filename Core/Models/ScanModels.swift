@@ -94,6 +94,7 @@ struct ColorSignature: Hashable {
     let blue: Double
     let saturation: Double
     let brightness: Double
+    let tileAverages: [Double]
 }
 
 /// 完全重复照片组（MD5 相同）
