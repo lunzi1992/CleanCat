@@ -8,6 +8,7 @@ final class PhotoQualityScorer {
     struct Assessment {
         let score: Double
         let reason: String
+        let containsFace: Bool
     }
 
     private struct PreparedImage {
@@ -24,7 +25,7 @@ final class PhotoQualityScorer {
 
     static func assess(_ image: UIImage) async -> Assessment {
         guard let prepared = prepare(image) else {
-            return Assessment(score: 50, reason: "建议保留")
+            return Assessment(score: 50, reason: "建议保留", containsFace: false)
         }
 
         let sharpness = computeSharpness(prepared)
@@ -48,7 +49,7 @@ final class PhotoQualityScorer {
             (resolution * 10, "画面更完整")
         ])
 
-        return Assessment(score: min(100, max(0, score)), reason: reason)
+        return Assessment(score: min(100, max(0, score)), reason: reason, containsFace: face.containsFace)
     }
 
     private static func prepare(_ image: UIImage) -> PreparedImage? {
@@ -107,18 +108,18 @@ final class PhotoQualityScorer {
         return (min(1, (total / Double(count)) / 70), "更清晰")
     }
 
-    private static func detectPrimaryFace(in cgImage: CGImage) async -> (score: Double, reason: String) {
+    private static func detectPrimaryFace(in cgImage: CGImage) async -> (score: Double, reason: String, containsFace: Bool) {
         await withCheckedContinuation { continuation in
             let request = VNDetectFaceRectanglesRequest { request, error in
                 guard error == nil, let faces = request.results as? [VNFaceObservation] else {
-                    continuation.resume(returning: (0.5, "建议保留"))
+                    continuation.resume(returning: (0.5, "建议保留", false))
                     return
                 }
 
                 guard let face = faces.max(by: {
                     $0.boundingBox.width * $0.boundingBox.height < $1.boundingBox.width * $1.boundingBox.height
                 }) else {
-                    continuation.resume(returning: (0.55, "画面更完整"))
+                    continuation.resume(returning: (0.55, "画面更完整", false))
                     return
                 }
 
@@ -133,14 +134,14 @@ final class PhotoQualityScorer {
                 let yawScore = max(0, 1 - yaw / 0.8)
 
                 let score = confidence * 0.35 + sizeScore * 0.25 + centerScore * 0.2 + yawScore * 0.2
-                continuation.resume(returning: (min(1, max(0, score)), "主体更清楚"))
+                continuation.resume(returning: (min(1, max(0, score)), "主体更清楚", true))
             }
 
             let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
             do {
                 try handler.perform([request])
             } catch {
-                continuation.resume(returning: (0.5, "建议保留"))
+                continuation.resume(returning: (0.5, "建议保留", false))
             }
         }
     }

@@ -89,9 +89,9 @@ struct SimilarListView: View {
     private func selectAllExceptBest() {
         AnalyticsManager.shared.track(
             .photoSelectAllTapped,
-            properties: ["source": "similar", "group_count": groups.count]
+            properties: ["source": "similar", "group_count": highConfidenceGroups.count]
         )
-        for group in groups {
+        for group in highConfidenceGroups {
             let sorted = group.photos.sorted { ($0.qualityScore ?? 0) > ($1.qualityScore ?? 0) }
             for photo in sorted.dropFirst() {
                 selectedPhotos.insert(photo.id)
@@ -100,7 +100,11 @@ struct SimilarListView: View {
     }
 
     private func totalDeletableCount() -> Int {
-        groups.reduce(0) { $0 + $1.photos.count - 1 }
+        highConfidenceGroups.reduce(0) { $0 + $1.photos.count - 1 }
+    }
+
+    private var highConfidenceGroups: [SimilarGroup] {
+        groups.filter { $0.confidence == .high }
     }
 
     private func formatBytes(_ bytes: Int64) -> String {
@@ -160,12 +164,18 @@ struct SimilarGroupCard: View {
                         .foregroundColor(.sage)
 
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("\(group.photos.count) 张可能相似")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                        Text("可释放 \(formatBytes(group.reclaimableSpace))")
+                        HStack(spacing: 6) {
+                            Text("\(group.photos.count) 张可能相似")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+
+                            ConfidenceBadge(confidence: group.confidence)
+                        }
+                        Text(group.confidence == .high ? "可释放 \(formatBytes(group.reclaimableSpace))" : "建议逐张检查")
                             .font(.caption)
                             .foregroundColor(.warmGray)
+
+                        ReasonTagRow(tags: group.reasonTags)
                     }
 
                     Spacer()

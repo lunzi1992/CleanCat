@@ -593,9 +593,11 @@ final class PhotoScanner: ObservableObject {
                 if let assessment = assessments[photo.id] {
                     updated.qualityScore = assessment.score
                     updated.qualityReason = assessment.reason
+                    updated.containsFace = assessment.containsFace
                 } else {
                     updated.qualityScore = fallbackQualityScore(for: photo)
                     updated.qualityReason = "建议保留"
+                    updated.containsFace = false
                 }
                 return updated
             }

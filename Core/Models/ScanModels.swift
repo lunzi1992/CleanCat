@@ -77,6 +77,7 @@ struct PhotoItem: Identifiable, Hashable {
     let colorSignature: ColorSignature?
     var qualityScore: Double?
     var qualityReason: String?
+    var containsFace: Bool = false
     
     func hash(into hasher: inout Hasher) {
         hasher.combine(id)
@@ -100,6 +101,9 @@ struct DuplicateGroup: Identifiable {
     let id = UUID()
     let md5Hash: String
     let photos: [PhotoItem]
+
+    var confidence: RecommendationConfidence { .high }
+    var reasonTags: [String] { ["完全相同文件", "大小尺寸一致", "本地哈希匹配"] }
     
     var duplicateCount: Int { photos.count - 1 }
     var reclaimableSpace: Int64 {
@@ -107,12 +111,44 @@ struct DuplicateGroup: Identifiable {
     }
 }
 
-/// 相似照片组（pHash 汉明距离 ≤ 阈值）
+enum RecommendationConfidence: Equatable {
+    case high
+    case cautious
+
+    var title: String {
+        switch self {
+        case .high: return "高可信"
+        case .cautious: return "谨慎检查"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .high: return "checkmark.shield.fill"
+        case .cautious: return "exclamationmark.triangle.fill"
+        }
+    }
+}
+
+/// 相似照片组（多维特征保守判断）
 struct SimilarGroup: Identifiable {
     let id = UUID()
     let photos: [PhotoItem]
+
     var bestPhoto: PhotoItem? {
         photos.max { ($0.qualityScore ?? 0) < ($1.qualityScore ?? 0) }
+    }
+
+    var confidence: RecommendationConfidence {
+        photos.contains(where: \.containsFace) ? .cautious : .high
+    }
+
+    var reasonTags: [String] {
+        var tags = ["视觉高度相似", "颜色构图接近", "同一时间段"]
+        if photos.contains(where: \.containsFace) {
+            tags.insert("含人脸，谨慎处理", at: 0)
+        }
+        return tags
     }
     
     var reclaimableSpace: Int64 {

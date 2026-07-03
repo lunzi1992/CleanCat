@@ -83,12 +83,18 @@ struct DuplicateGroupCard: View {
                         .foregroundColor(.peach)
 
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("\(group.photos.count) 张完全相同的照片")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
+                        HStack(spacing: 6) {
+                            Text("\(group.photos.count) 张完全相同的照片")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+
+                            ConfidenceBadge(confidence: group.confidence)
+                        }
                         Text("可释放 \(formatBytes(group.reclaimableSpace))")
                             .font(.caption)
                             .foregroundColor(.sage)
+
+                        ReasonTagRow(tags: group.reasonTags)
                     }
 
                     Spacer()
