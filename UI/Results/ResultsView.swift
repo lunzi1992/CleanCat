@@ -80,7 +80,7 @@ struct ResultsView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("扫描完成")
-                        .font(.system(size: 22, weight: .bold, design: .rounded))
+                        .font(Design.headlineFont)
                         .foregroundColor(.sageDark)
 
                     Text("共 \(results.totalPhotoCount) 张照片,耗时 \(String(format: "%.1f", results.scanDuration)) 秒")
@@ -111,7 +111,7 @@ struct ResultsView: View {
                     }
                 }
             }
-            .padding(.horizontal, 20)
+            .contentWrapper()
             .padding(.top, 16)
             .padding(.bottom, 8)
         }
@@ -121,12 +121,12 @@ struct ResultsView: View {
     private var yearSelector: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 10) {
-                ForEach(scanner.availableYears, id: \.self) { year in
+                ForEach(scanner.availableYears.sorted(by: >), id: \.self) { year in
                     yearChip(.year(year))
                 }
                 yearChip(.all)
             }
-            .padding(.horizontal, 20)
+            .padding(.horizontal, Design.contentHorizontalPadding)
             .padding(.vertical, 10)
         }
         .background(.ultraThinMaterial)
@@ -146,6 +146,9 @@ struct ResultsView: View {
             Text(bucket.displayName)
                 .font(.system(size: 14, weight: .semibold, design: .rounded))
                 .foregroundColor(isSelected ? .white : .sageDark)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(minWidth: 58)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
                 .background(isSelected ? Color.brandGradient : LinearGradient(colors: [Color(.systemBackground)], startPoint: .top, endPoint: .bottom))
@@ -156,7 +159,7 @@ struct ResultsView: View {
     // MARK: - Tab Selector
 
     private var tabSelector: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 6) {
             ForEach(ResultTab.allCases, id: \.self) { tab in
                 Button(action: {
                     catHaptic(.light)
@@ -166,25 +169,30 @@ struct ResultsView: View {
                         properties: ["tab": tab.rawValue]
                     )
                 }) {
-                    VStack(spacing: 8) {
-                        HStack(spacing: 6) {
-                            Image(systemName: tab.icon)
-                                .font(.subheadline)
-                            Text(tab.rawValue)
-                                .font(.system(size: 14, weight: .medium))
-                        }
-
-                        Rectangle()
-                            .fill(selectedTab == tab ? Color.sage : Color.clear)
-                            .frame(height: 2)
+                    HStack(spacing: 6) {
+                        Image(systemName: tab.icon)
+                            .font(.system(size: 13, weight: .semibold))
+                        Text(tab.rawValue)
+                            .font(.system(size: 14, weight: .semibold, design: .rounded))
                     }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .foregroundColor(selectedTab == tab ? .white : .sageDark)
+                    .background(
+                        selectedTab == tab
+                        ? Color.brandGradient
+                        : LinearGradient(
+                            colors: [Color(.systemBackground).opacity(0.72)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .clipShape(Capsule())
                 }
-                .foregroundColor(selectedTab == tab ? .sageDark : .warmGray)
-                .frame(maxWidth: .infinity)
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.top, 12)
+        .contentWrapper()
+        .padding(.vertical, 12)
         .background(.ultraThinMaterial)
     }
 
@@ -217,8 +225,8 @@ struct ResultsView: View {
     private var bottomActionBar: some View {
         HStack {
             Text("已选 \(selectedPhotos.count) 张")
-                .font(.subheadline)
-                .foregroundColor(.warmGray)
+                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                .foregroundColor(.sageDark)
 
             Spacer()
 
@@ -231,15 +239,19 @@ struct ResultsView: View {
                 showDeleteConfirm = true
             }) {
                 Text("删除 \(selectedPhotos.count) 张")
-                    .font(.headline)
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 14)
-                    .background(Color.appDanger)
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .foregroundColor(.appDanger)
+                    .padding(.horizontal, 22)
+                    .padding(.vertical, 13)
+                    .background(Color.appDanger.opacity(0.12))
+                    .overlay(
+                        Capsule()
+                            .stroke(Color.appDanger.opacity(0.28), lineWidth: 1)
+                    )
                     .clipShape(Capsule())
             }
         }
-        .padding(.horizontal, 20)
+        .contentWrapper()
         .padding(.vertical, 14)
         .background(.ultraThinMaterial)
         .overlay(

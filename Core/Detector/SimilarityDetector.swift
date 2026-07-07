@@ -212,7 +212,7 @@ final class SimilarityDetector {
     /// 检测相似照片并分组
     func detectSimilar(in photos: [PhotoItem]) -> [SimilarGroup] {
         // 只处理有 pHash 值的照片
-        let validPhotos = photos.filter { $0.pHash != nil && $0.asset.mediaType == .image && !$0.isLivePhoto }
+        let validPhotos = photos.filter { $0.pHash != nil && $0.asset.mediaType == .image && !$0.isLivePhoto && !$0.isCloudOnly }
         guard validPhotos.count >= SimilarityDetector.minGroupSize else { return [] }
         
         let sortedPhotos = validPhotos.sorted {

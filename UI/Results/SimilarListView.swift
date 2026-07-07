@@ -1,16 +1,15 @@
 import SwiftUI
 
 /// 相似照片列表
-/// PRD V1.1 REQ-010: 前 3 组免费预览建议保留,第 4 组起需付费解锁
+/// PRD V1.1 REQ-010: 前 10 组显示建议保留,其余组仍可手动检查
 struct SimilarListView: View {
     let groups: [SimilarGroup]
     @Binding var selectedPhotos: Set<String>
     @EnvironmentObject var appState: AppState
-    @State private var showPaywall = false
     @State private var didTrackPreviewExhausted = false
 
-    /// freemium 阈值:前 3 组可看建议保留
-    private let freeThreshold = 3
+    /// MVP 阈值:前 10 组显示建议保留,其余组只做手动检查
+    private let freeThreshold = 10
 
     var body: some View {
         ScrollView {
@@ -22,18 +21,27 @@ struct SimilarListView: View {
                         subtitle: "这一年保留下来的都挺不一样"
                     )
                 } else {
-                    Button(action: handleBestSelection) {
-                        HStack {
-                            Image(systemName: "sparkles")
-                            Text(appState.isPro ? "保留建议，选中其余" : "查看建议保留")
-                            Spacer()
-                            if appState.isPro {
+                    if appState.isPro {
+                        Button(action: handleBestSelection) {
+                            HStack {
+                                Image(systemName: "sparkles")
+                                Text("保留建议，选中其余")
+                                Spacer()
                                 Text("\(totalDeletableCount()) 张")
                                     .foregroundColor(.secondary)
-                            } else {
-                                Image(systemName: "lock.fill")
-                                    .foregroundColor(.secondary)
                             }
+                            .font(.subheadline)
+                            .padding(12)
+                            .background(Color.sage.opacity(0.12))
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                        }
+                    } else {
+                        HStack {
+                            Image(systemName: "sparkles")
+                            Text("前 10 组显示建议保留")
+                            Spacer()
+                            Text("其余可手动检查")
+                                .foregroundColor(.secondary)
                         }
                         .font(.subheadline)
                         .padding(12)
@@ -46,10 +54,8 @@ struct SimilarListView: View {
                             group: group,
                             selectedPhotos: $selectedPhotos,
                             showsBestRecommendation: appState.isPro || index < freeThreshold,
-                            lockedReason: (!appState.isPro && index >= freeThreshold) ? "升级后显示建议" : nil
-                        ) {
-                            showPaywall = true
-                        }
+                            lockedReason: (!appState.isPro && index >= freeThreshold) ? "手动检查" : nil
+                        )
                         .onAppear {
                             if !appState.isPro && index == freeThreshold && !didTrackPreviewExhausted {
                                 didTrackPreviewExhausted = true
@@ -62,7 +68,7 @@ struct SimilarListView: View {
                     }
 
                     if !appState.isPro && groups.count > freeThreshold {
-                        Text("前 3 组免费显示建议保留，其余组可继续浏览，升级后解锁全量建议与一键保留建议。")
+                        Text("前 10 组显示建议保留；后续组仍可展开、预览和手动选择删除，但不标记建议保留。")
                             .font(.caption)
                             .foregroundColor(.warmGray)
                             .multilineTextAlignment(.center)
@@ -72,17 +78,11 @@ struct SimilarListView: View {
             }
             .padding(16)
         }
-        .sheet(isPresented: $showPaywall) {
-            PaywallView()
-                .environmentObject(appState)
-        }
     }
 
     private func handleBestSelection() {
         if appState.isPro {
             selectAllExceptBest()
-        } else {
-            showPaywall = true
         }
     }
 
@@ -119,12 +119,10 @@ struct SimilarGroupCard: View {
     @Binding var selectedPhotos: Set<String>
     let showsBestRecommendation: Bool
     let lockedReason: String?
-    let onUnlock: () -> Void
     private let sortedPhotos: [PhotoItem]
     private let bestPhotoID: String?
     private let bestReasonText: String
 
-    @EnvironmentObject var appState: AppState
     @State private var isExpanded = false
     @State private var showsAllPhotos = false
 
@@ -134,14 +132,12 @@ struct SimilarGroupCard: View {
         group: SimilarGroup,
         selectedPhotos: Binding<Set<String>>,
         showsBestRecommendation: Bool,
-        lockedReason: String?,
-        onUnlock: @escaping () -> Void
+        lockedReason: String?
     ) {
         self.group = group
         self._selectedPhotos = selectedPhotos
         self.showsBestRecommendation = showsBestRecommendation
         self.lockedReason = lockedReason
-        self.onUnlock = onUnlock
 
         let sorted = group.photos.sorted { ($0.qualityScore ?? 0) > ($1.qualityScore ?? 0) }
         self.sortedPhotos = sorted
@@ -181,19 +177,16 @@ struct SimilarGroupCard: View {
                     Spacer()
 
                     if let lockedReason {
-                        Button(action: onUnlock) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "lock.fill")
-                                Text(lockedReason)
-                            }
-                            .font(.caption2)
-                            .foregroundColor(.warmGray)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 5)
-                            .background(Color.warmGray.opacity(0.1))
-                            .clipShape(Capsule())
+                        HStack(spacing: 4) {
+                            Image(systemName: "hand.tap")
+                            Text(lockedReason)
                         }
-                        .buttonStyle(.plain)
+                        .font(.caption2)
+                        .foregroundColor(.warmGray)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(Color.warmGray.opacity(0.1))
+                        .clipShape(Capsule())
                     } else {
                         Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                             .font(.caption)

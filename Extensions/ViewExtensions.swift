@@ -55,6 +55,9 @@ enum Design {
     static let headlineFont: Font = .system(size: 22, weight: .semibold, design: .rounded)
     static let bodyFont: Font = .system(size: 16, weight: .regular, design: .rounded)
     static let captionFont: Font = .system(size: 13, weight: .regular, design: .rounded)
+
+    static let contentMaxWidth: CGFloat = 480
+    static let contentHorizontalPadding: CGFloat = 20
 }
 
 // MARK: - 通用 ViewModifier
@@ -83,10 +86,19 @@ struct BrandButton: ViewModifier {
         content
             .font(.headline)
             .foregroundColor(.white)
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: Design.contentMaxWidth)
             .padding(.vertical, 18)
             .background(Color.brandGradient.opacity(disabled ? 0.5 : 1))
             .clipShape(RoundedRectangle(cornerRadius: Design.radiusFull))
+    }
+}
+
+struct ContentWrapper: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .frame(maxWidth: Design.contentMaxWidth)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, Design.contentHorizontalPadding)
     }
 }
 
@@ -94,6 +106,7 @@ extension View {
     func glassCard() -> some View { modifier(GlassCard()) }
     func elevatedCard() -> some View { modifier(ElevatedCard()) }
     func brandButton(disabled: Bool = false) -> some View { modifier(BrandButton(disabled: disabled)) }
+    func contentWrapper() -> some View { modifier(ContentWrapper()) }
 
     @ViewBuilder
     func `if`<Content: View>(_ cond: Bool, @ViewBuilder t: (Self) -> Content) -> some View {

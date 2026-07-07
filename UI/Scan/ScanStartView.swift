@@ -13,7 +13,7 @@ struct ScanStartView: View {
                     scanButton
                     privacyNote
                 }
-                .padding(.horizontal, Design.spaceMD)
+                .contentWrapper()
                 .padding(.top, 40)
                 .padding(.bottom, 60)
             }
@@ -51,12 +51,12 @@ struct ScanStartView: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: Design.spaceSM) {
-                    ForEach(scanner.availableYears, id: \.self) { year in
+                    ForEach(scanner.availableYears.sorted(by: >), id: \.self) { year in
                         yearChip(YearBucket.year(year))
                     }
                     yearChip(.all)
                 }
-                .padding(.horizontal, Design.spaceSM)
+                .padding(.horizontal, 2)
             }
         }
     }
@@ -71,6 +71,9 @@ struct ScanStartView: View {
             Text(bucket.displayName)
                 .font(.system(size: 15, weight: .semibold, design: .rounded))
                 .foregroundColor(isSelected ? .white : Color.sageD)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(minWidth: 62)
                 .padding(.horizontal, 18)
                 .padding(.vertical, 10)
                 .background(

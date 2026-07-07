@@ -26,24 +26,20 @@ struct PermissionRequestView: View {
                         .multilineTextAlignment(.center).lineSpacing(6)
                 }
 
-                VStack(spacing: Design.spaceSM) {
-                    HStack(spacing: Design.spaceSM) {
-                        Image(systemName: "checkmark.circle.fill").foregroundColor(Color.sage).font(.caption)
-                        Text("不联网").font(Design.captionFont).foregroundColor(Color.grayW)
-                        Spacer()
-                        Image(systemName: "checkmark.circle.fill").foregroundColor(Color.sage).font(.caption)
-                        Text("不上传").font(Design.captionFont).foregroundColor(Color.grayW)
-                    }
-                    HStack(spacing: Design.spaceSM) {
-                        Image(systemName: "checkmark.circle.fill").foregroundColor(Color.sage).font(.caption)
-                        Text("不注册").font(Design.captionFont).foregroundColor(Color.grayW)
-                        Spacer()
-                        Image(systemName: "checkmark.circle.fill").foregroundColor(Color.sage).font(.caption)
-                        Text("100% 本地").font(Design.captionFont).foregroundColor(Color.grayW)
-                    }
+                LazyVGrid(
+                    columns: [
+                        GridItem(.flexible(), spacing: Design.spaceSM),
+                        GridItem(.flexible(), spacing: Design.spaceSM)
+                    ],
+                    spacing: Design.spaceSM
+                ) {
+                    PrivacyPromiseItem(icon: "wifi.slash", title: "不联网")
+                    PrivacyPromiseItem(icon: "icloud.slash", title: "不上传")
+                    PrivacyPromiseItem(icon: "person.crop.circle.badge.xmark", title: "不注册")
+                    PrivacyPromiseItem(icon: "iphone.gen3", title: "本机分析")
                 }
                 .glassCard()
-                .padding(.horizontal, Design.spaceXL)
+                .contentWrapper()
 
                 Spacer()
 
@@ -52,7 +48,7 @@ struct PermissionRequestView: View {
                 }
                 .brandButton(disabled: requesting)
                 .disabled(requesting)
-                .padding(.horizontal, Design.spaceXL)
+                .contentWrapper()
                 .padding(.bottom, 50)
             }
         }
@@ -76,5 +72,30 @@ struct PermissionRequestView: View {
                 }
             }
         }
+    }
+}
+
+private struct PrivacyPromiseItem: View {
+    let icon: String
+    let title: String
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 24, weight: .semibold))
+                .foregroundStyle(Color.brandGradient)
+                .frame(width: 42, height: 42)
+                .background(Color.sageL.opacity(0.75), in: Circle())
+
+            Text(title)
+                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                .foregroundColor(Color.sageD)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+        }
+        .frame(maxWidth: .infinity, minHeight: 82)
+        .padding(.vertical, 10)
+        .background(Color(.systemBackground).opacity(0.58))
+        .clipShape(RoundedRectangle(cornerRadius: Design.radiusXS))
     }
 }

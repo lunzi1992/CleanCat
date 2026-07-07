@@ -70,6 +70,7 @@ struct PhotoItem: Identifiable, Hashable {
     let isScreenshot: Bool
     let isScreenRecording: Bool
     let isLivePhoto: Bool
+    let isCloudOnly: Bool
     let fileSize: Int64
     let creationDate: Date?
     let pixelWidth: Int

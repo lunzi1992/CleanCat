@@ -435,19 +435,13 @@ final class PhotoScanner: ObservableObject {
         let resources = PHAssetResource.assetResources(for: asset)
         let fileSize = resources.first?.value(forKey: "fileSize") as? Int64 ?? 0
 
-        let imageManager = PHImageManager.default()
-        let options = PHImageRequestOptions()
-        options.deliveryMode = .highQualityFormat
-        options.isNetworkAccessAllowed = false
-        options.resizeMode = .exact
-        options.isSynchronous = false
-
-        let thumb = await requestThumbnail(asset: asset, size: CGSize(width: 256, height: 256), imageManager: imageManager, options: options)
+        let analysisImage = asset.mediaType == .image ? await requestQualityImage(for: asset) : nil
+        let isCloudOnly = asset.mediaType == .image && analysisImage == nil
 
         var pHashValue: UInt64? = nil
         var colorSignature: ColorSignature? = nil
 
-        if let img = thumb {
+        if let img = analysisImage {
             pHashValue = SimilarityDetector.computePHash(from: img)
             colorSignature = SimilarityDetector.computeColorSignature(from: img)
         }
@@ -460,6 +454,7 @@ final class PhotoScanner: ObservableObject {
             isScreenshot: isScreenshot,
             isScreenRecording: isScreenRecording,
             isLivePhoto: isLivePhoto,
+            isCloudOnly: isCloudOnly,
             fileSize: fileSize,
             creationDate: asset.creationDate,
             pixelWidth: asset.pixelWidth,
@@ -485,7 +480,7 @@ final class PhotoScanner: ObservableObject {
     }
 
     private func duplicateCandidateIDs(in photos: [PhotoItem]) -> Set<String> {
-        let grouped = Dictionary(grouping: photos.filter { $0.asset.mediaType == .image && !$0.isLivePhoto && $0.fileSize > 0 }) { photo in
+        let grouped = Dictionary(grouping: photos.filter { $0.asset.mediaType == .image && !$0.isLivePhoto && !$0.isCloudOnly && $0.fileSize > 0 }) { photo in
             "\(photo.fileSize)-\(photo.pixelWidth)x\(photo.pixelHeight)"
         }
 
@@ -529,19 +524,6 @@ final class PhotoScanner: ObservableObject {
         }
 
         return result
-    }
-
-    private nonisolated func requestThumbnail(asset: PHAsset, size: CGSize, imageManager: PHImageManager, options: PHImageRequestOptions) async -> UIImage? {
-        await withCheckedContinuation { continuation in
-            imageManager.requestImage(
-                for: asset,
-                targetSize: size,
-                contentMode: .aspectFill,
-                options: options
-            ) { image, _ in
-                continuation.resume(returning: image)
-            }
-        }
     }
 
     private nonisolated func requestFileMD5(for asset: PHAsset) async -> String? {
@@ -690,6 +672,10 @@ final class PhotoScanner: ObservableObject {
                 options: options
             ) { image, info in
                 if let cancelled = info?[PHImageCancelledKey] as? Bool, cancelled {
+                    return
+                }
+                if let inCloud = info?[PHImageResultIsInCloudKey] as? Bool, inCloud {
+                    resume(nil)
                     return
                 }
                 if let degraded = info?[PHImageResultIsDegradedKey] as? Bool, degraded {

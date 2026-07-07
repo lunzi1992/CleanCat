@@ -109,6 +109,7 @@ struct CleanupResultView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 20))
                             .shadow(color: Color.sage.opacity(0.3), radius: 10, y: 5)
                     }
+                    .buttonStyle(.plain)
 
                     if let onContinue = onContinueNextYear {
                         Button(action: {
@@ -122,9 +123,14 @@ struct CleanupResultView: View {
                                 Image(systemName: "arrow.right")
                                 Text("继续整理上一年")
                             }
-                            .font(.subheadline)
+                            .font(.system(size: 15, weight: .semibold, design: .rounded))
                             .foregroundColor(.sageDark)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 15)
+                            .background(Color.sage.opacity(0.12))
+                            .clipShape(RoundedRectangle(cornerRadius: 18))
                         }
+                        .buttonStyle(.plain)
                     }
 
                     Button(action: {
@@ -139,11 +145,13 @@ struct CleanupResultView: View {
                             Image(systemName: "square.and.arrow.up")
                             Text("分享成果")
                         }
-                        .font(.subheadline)
+                        .font(.system(size: 14, weight: .medium, design: .rounded))
                         .foregroundColor(.warmGray)
+                        .padding(.top, 2)
                     }
+                    .buttonStyle(.plain)
                 }
-                .padding(.horizontal, 24)
+                .contentWrapper()
                 .padding(.bottom, 48)
             }
             .frame(maxWidth: 480) // 大屏居中

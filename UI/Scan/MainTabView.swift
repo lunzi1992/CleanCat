@@ -7,7 +7,7 @@ struct MainTabView: View {
     @State private var showSettings = false
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
+        ZStack {
             Group {
                 switch scanner.state {
                 case .idle:
@@ -24,19 +24,16 @@ struct MainTabView: View {
                     ScanErrorView(message: message, scanner: scanner)
                 }
             }
-
-            if scanner.state != .scanning {
-                Button(action: { showSettings = true }) {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(.sageDark)
-                        .frame(width: 40, height: 40)
-                        .background(.ultraThinMaterial, in: Circle())
-                }
-                .padding(.trailing, 16)
-                .padding(.top, 8)
-                .accessibilityLabel("设置")
+        }
+        .safeAreaInset(edge: .top) {
+            HStack {
+                Spacer()
+                settingsButton
             }
+            .padding(.trailing, Design.contentHorizontalPadding)
+            .padding(.top, 4)
+            .padding(.bottom, 4)
+            .allowsHitTesting(true)
         }
         .sheet(isPresented: $showSettings) {
             SettingsView()
@@ -47,5 +44,20 @@ struct MainTabView: View {
                 scanner.detectAvailableYears()
             }
         }
+    }
+
+    private var settingsButton: some View {
+        Button(action: { showSettings = true }) {
+            Image(systemName: "gearshape")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundColor(.sageDark)
+                .frame(width: 40, height: 40)
+                .background(.ultraThinMaterial, in: Circle())
+                .overlay(
+                    Circle()
+                        .stroke(Color.sage.opacity(0.14), lineWidth: 1)
+                )
+        }
+        .accessibilityLabel("设置")
     }
 }
