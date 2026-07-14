@@ -13,12 +13,14 @@ struct ResultsView: View {
         case duplicates = "重复照片"
         case similar = "相似照片"
         case screenshots = "截图"
+        case lowQuality = "待检查"
 
         var icon: String {
             switch self {
             case .duplicates: return "doc.on.doc"
             case .similar: return "rectangle.3.group"
             case .screenshots: return "camera.viewfinder"
+            case .lowQuality: return "exclamationmark.triangle"
             }
         }
     }
@@ -42,7 +44,8 @@ struct ResultsView: View {
                 properties: [
                     "duplicate_groups": results.duplicateGroups.count,
                     "similar_groups": results.similarGroups.count,
-                    "screenshots": results.screenshots.count
+                    "screenshots": results.screenshots.count,
+                    "low_quality_photos": results.lowQualityPhotos.count
                 ]
             )
         }
@@ -86,6 +89,13 @@ struct ResultsView: View {
                     Text("共 \(results.totalPhotoCount) 张照片,耗时 \(String(format: "%.1f", results.scanDuration)) 秒")
                         .font(.caption)
                         .foregroundColor(.warmGray)
+
+                    if results.cloudOnlyPhotoCount > 0 || results.livePhotoCount > 0 {
+                        Text(analysisCoverageText)
+                            .font(.caption2)
+                            .foregroundColor(.warmGray)
+                            .lineLimit(2)
+                    }
                 }
 
                 Spacer()
@@ -209,13 +219,21 @@ struct ResultsView: View {
         case .similar:
             SimilarListView(
                 groups: results.similarGroups,
-                selectedPhotos: $selectedPhotos
+                selectedPhotos: $selectedPhotos,
+                protectedPhotoIDs: protectedDuplicatePhotoIDs
             )
         case .screenshots:
             ScreenshotListView(
                 screenshots: results.screenshots,
                 recordings: results.screenRecordings,
-                selectedPhotos: $selectedPhotos
+                selectedPhotos: $selectedPhotos,
+                protectedPhotoIDs: protectedDuplicatePhotoIDs
+            )
+        case .lowQuality:
+            LowQualityListView(
+                photos: results.lowQualityPhotos,
+                selectedPhotos: $selectedPhotos,
+                protectedPhotoIDs: protectedDuplicatePhotoIDs
             )
         }
     }
@@ -269,7 +287,9 @@ struct ResultsView: View {
         var seenIDs: Set<String> = []
 
         func appendIfSelected(_ photo: PhotoItem) {
-            guard selectedPhotos.contains(photo.id), !seenIDs.contains(photo.id) else { return }
+            guard selectedPhotos.contains(photo.id),
+                  !protectedDuplicatePhotoIDs.contains(photo.id),
+                  !seenIDs.contains(photo.id) else { return }
             seenIDs.insert(photo.id)
             items.append(photo)
         }
@@ -282,7 +302,23 @@ struct ResultsView: View {
         }
         results.screenshots.forEach(appendIfSelected)
         results.screenRecordings.forEach(appendIfSelected)
+        results.lowQualityPhotos.forEach(appendIfSelected)
         return items
+    }
+
+    private var protectedDuplicatePhotoIDs: Set<String> {
+        Set(results.duplicateGroups.compactMap { $0.photos.first?.id })
+    }
+
+    private var analysisCoverageText: String {
+        var items: [String] = []
+        if results.cloudOnlyPhotoCount > 0 {
+            items.append("\(results.cloudOnlyPhotoCount) 张仅在 iCloud，未纳入相似分析")
+        }
+        if results.livePhotoCount > 0 {
+            items.append("\(results.livePhotoCount) 张 Live Photo 暂不纳入相似分析")
+        }
+        return items.joined(separator: " · ")
     }
 
     private func handleDeleteResult(_ result: DeleteManager.DeleteResult) {

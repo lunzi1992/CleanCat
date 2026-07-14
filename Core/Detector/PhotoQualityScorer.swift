@@ -11,6 +11,12 @@ final class PhotoQualityScorer {
         let containsFace: Bool
     }
 
+    /// 低质量候选只用于“待检查”，不会触发自动选择或删除。
+    struct TechnicalAssessment {
+        let score: Double
+        let issueReason: String?
+    }
+
     private struct PreparedImage {
         let width: Int
         let height: Int
@@ -52,10 +58,33 @@ final class PhotoQualityScorer {
         return Assessment(score: min(100, max(0, score)), reason: reason, containsFace: face.containsFace)
     }
 
-    private static func prepare(_ image: UIImage) -> PreparedImage? {
+    /// 快速技术质量筛查，不运行人脸识别，供全相册扫描阶段使用。
+    static func assessTechnicalQuality(_ image: UIImage) -> TechnicalAssessment {
+        guard let prepared = prepare(image, maxDimension: 240) else {
+            return TechnicalAssessment(score: 50, issueReason: nil)
+        }
+
+        let sharpness = computeSharpness(prepared)
+        let exposure = computeExposure(prepared)
+        let contrast = computeContrast(prepared)
+        let score = (sharpness.score * 55 + exposure.score * 30 + contrast.score * 15) * 100
+
+        // 只收录明显异常，宁可漏掉，也不把普通夜景或氛围照推给用户清理。
+        let issueReason: String?
+        if exposure.score < 0.20 {
+            issueReason = "曝光明显异常"
+        } else if sharpness.score < 0.08 && contrast.score < 0.14 && exposure.score > 0.35 {
+            issueReason = "画面可能模糊"
+        } else {
+            issueReason = nil
+        }
+
+        return TechnicalAssessment(score: score, issueReason: issueReason)
+    }
+
+    private static func prepare(_ image: UIImage, maxDimension: Int = 640) -> PreparedImage? {
         guard let source = image.cgImage else { return nil }
 
-        let maxDimension = 640
         let scale = min(1, Double(maxDimension) / Double(max(source.width, source.height)))
         let width = max(1, Int(Double(source.width) * scale))
         let height = max(1, Int(Double(source.height) * scale))

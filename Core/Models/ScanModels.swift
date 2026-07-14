@@ -8,33 +8,43 @@ struct ScanResults {
     let similarGroups: [SimilarGroup]
     let screenshots: [PhotoItem]
     let screenRecordings: [PhotoItem]
+    let lowQualityPhotos: [PhotoItem]
+    let cloudOnlyPhotoCount: Int
+    let livePhotoCount: Int
     let scanDuration: TimeInterval
     
     /// 预计可释放空间（字节）
     var totalReclaimableSpace: Int64 {
-        var space: Int64 = 0
+        reclaimablePhotos.reduce(0) { $0 + $1.fileSize }
+    }
+
+    var totalReclaimableCount: Int {
+        reclaimablePhotos.count
+    }
+
+    /// 重复照片优先，其次才是相似照片与截图。一个资源只计入一次，
+    /// 让“可释放”估算与用户实际可选删除的范围一致。
+    var reclaimablePhotos: [PhotoItem] {
+        var seenIDs = Set(duplicateGroups.compactMap { $0.photos.first?.id })
+        var photos: [PhotoItem] = []
+
+        func appendIfNeeded(_ photo: PhotoItem) {
+            guard seenIDs.insert(photo.id).inserted else { return }
+            photos.append(photo)
+        }
+
         for group in duplicateGroups {
-            // 每组保留一张，其余可删
-            space += group.photos.dropFirst().reduce(0) { $0 + $1.fileSize }
+            group.photos.dropFirst().forEach(appendIfNeeded)
         }
         for group in similarGroups {
-            // 默认保留建议保留的一张，其余可删
-            let sorted = group.photos.sorted { ($0.qualityScore ?? 0) > ($1.qualityScore ?? 0) }
-            space += sorted.dropFirst().reduce(0) { $0 + $1.fileSize }
+            group.photos
+                .sorted(by: PhotoItem.isPreferredForRecommendation)
+                .dropFirst()
+                .forEach(appendIfNeeded)
         }
-        for photo in screenshots {
-            space += photo.fileSize
-        }
-        for recording in screenRecordings {
-            space += recording.fileSize
-        }
-        return space
-    }
-    
-    var totalReclaimableCount: Int {
-        let duplicateCount = duplicateGroups.reduce(0) { $0 + $1.photos.count - 1 }
-        let similarCount = similarGroups.reduce(0) { $0 + $1.photos.count - 1 }
-        return duplicateCount + similarCount + screenshots.count + screenRecordings.count
+        screenshots.forEach(appendIfNeeded)
+        screenRecordings.forEach(appendIfNeeded)
+        return photos
     }
 
     func removing(photoIDs deletedIDs: Set<String>) -> ScanResults {
@@ -56,6 +66,9 @@ struct ScanResults {
             similarGroups: similar,
             screenshots: screenshots.filter { !deletedIDs.contains($0.id) },
             screenRecordings: screenRecordings.filter { !deletedIDs.contains($0.id) },
+            lowQualityPhotos: lowQualityPhotos.filter { !deletedIDs.contains($0.id) },
+            cloudOnlyPhotoCount: cloudOnlyPhotoCount,
+            livePhotoCount: livePhotoCount,
             scanDuration: scanDuration
         )
     }
@@ -78,6 +91,8 @@ struct PhotoItem: Identifiable, Hashable {
     let colorSignature: ColorSignature?
     var qualityScore: Double?
     var qualityReason: String?
+    var technicalQualityScore: Double?
+    var qualityIssueReason: String?
     var containsFace: Bool = false
     
     func hash(into hasher: inout Hasher) {
@@ -86,6 +101,31 @@ struct PhotoItem: Identifiable, Hashable {
     
     static func == (lhs: PhotoItem, rhs: PhotoItem) -> Bool {
         lhs.id == rhs.id
+    }
+
+    /// 保留选择必须稳定：优先收藏照片，再保留较新的版本，最后用资源 ID 打破平局。
+    static func isPreferredForRetention(_ lhs: PhotoItem, _ rhs: PhotoItem) -> Bool {
+        if lhs.asset.isFavorite != rhs.asset.isFavorite {
+            return lhs.asset.isFavorite
+        }
+
+        let lhsDate = lhs.creationDate ?? .distantPast
+        let rhsDate = rhs.creationDate ?? .distantPast
+        if lhsDate != rhsDate {
+            return lhsDate > rhsDate
+        }
+
+        return lhs.id < rhs.id
+    }
+
+    /// 相似组优先采用质量评分；分数相同或不可用时，复用稳定的保留规则。
+    static func isPreferredForRecommendation(_ lhs: PhotoItem, _ rhs: PhotoItem) -> Bool {
+        let lhsScore = lhs.qualityScore ?? 0
+        let rhsScore = rhs.qualityScore ?? 0
+        if lhsScore != rhsScore {
+            return lhsScore > rhsScore
+        }
+        return isPreferredForRetention(lhs, rhs)
     }
 }
 
@@ -138,7 +178,7 @@ struct SimilarGroup: Identifiable {
     let photos: [PhotoItem]
 
     var bestPhoto: PhotoItem? {
-        photos.max { ($0.qualityScore ?? 0) < ($1.qualityScore ?? 0) }
+        photos.sorted(by: PhotoItem.isPreferredForRecommendation).first
     }
 
     var confidence: RecommendationConfidence {
@@ -154,7 +194,7 @@ struct SimilarGroup: Identifiable {
     }
     
     var reclaimableSpace: Int64 {
-        let sorted = photos.sorted { ($0.qualityScore ?? 0) > ($1.qualityScore ?? 0) }
+        let sorted = photos.sorted(by: PhotoItem.isPreferredForRecommendation)
         return sorted.dropFirst().reduce(0) { $0 + $1.fileSize }
     }
 }

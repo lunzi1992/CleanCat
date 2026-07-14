@@ -63,6 +63,7 @@ struct DuplicateGroupCard: View {
     @Binding var selectedPhotos: Set<String>
     @State private var isExpanded = false
     @State private var showsAllPhotos = false
+    @State private var previewStartID: String?
 
     private let initialPhotoLimit = 60
 
@@ -119,7 +120,8 @@ struct DuplicateGroupCard: View {
                             photo: photo,
                             isSelected: selectedPhotos.contains(photo.id),
                             isKeep: photo.id == group.photos.first?.id,
-                            showsSelectionControl: photo.id != group.photos.first?.id
+                            showsSelectionControl: photo.id != group.photos.first?.id,
+                            onPreview: { previewStartID = photo.id }
                         ) {
                             toggleSelection(photo)
                         }
@@ -142,6 +144,22 @@ struct DuplicateGroupCard: View {
         }
         .background(Color(.systemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 12))
+        .fullScreenCover(
+            isPresented: Binding(
+                get: { previewStartID != nil },
+                set: { if !$0 { previewStartID = nil } }
+            )
+        ) {
+            if let previewStartID {
+                SelectablePhotoPreviewPager(
+                    photos: group.photos,
+                    initialPhotoID: previewStartID,
+                    selectedPhotos: $selectedPhotos,
+                    protectedPhotoIDs: Set(group.photos.prefix(1).map(\.id)),
+                    analyticsSource: "duplicate_preview"
+                )
+            }
+        }
     }
 
     private var visiblePhotos: [PhotoItem] {

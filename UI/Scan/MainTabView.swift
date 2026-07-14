@@ -3,6 +3,7 @@ import SwiftUI
 /// 主页面（扫描 + 结果，按年分桶版）
 struct MainTabView: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var scanner = PhotoScanner()
     @State private var showSettings = false
 
@@ -42,6 +43,16 @@ struct MainTabView: View {
         .onAppear {
             if scanner.availableYears.isEmpty {
                 scanner.detectAvailableYears()
+            }
+        }
+        .onChange(of: scenePhase) { oldPhase, newPhase in
+            switch (oldPhase, newPhase) {
+            case (.active, .inactive), (.active, .background):
+                scanner.pauseForBackground()
+            case (_, .active):
+                scanner.resumeAfterForeground()
+            default:
+                break
             }
         }
     }

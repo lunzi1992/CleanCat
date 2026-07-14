@@ -21,6 +21,7 @@ final class PhotoScanner: ObservableObject {
     private let imageManager = PHCachingImageManager()
     private var scanTask: Task<Void, Never>?
     private var activeScanID: UUID?
+    private var pausedBucket: YearBucket?
 
     /// 全局内存压力观察者（OOM 保护）
     private var memoryWarningObserver: NSObjectProtocol?
@@ -118,6 +119,7 @@ final class PhotoScanner: ObservableObject {
 
     /// 扫描指定年份
     func scanYear(_ year: Int) {
+        pausedBucket = nil
         let scanID = UUID()
         activeScanID = scanID
         state = .scanning
@@ -136,6 +138,7 @@ final class PhotoScanner: ObservableObject {
 
     /// 扫描全部年份
     func scanAll() {
+        pausedBucket = nil
         let scanID = UUID()
         activeScanID = scanID
         state = .scanning
@@ -157,10 +160,33 @@ final class PhotoScanner: ObservableObject {
         scanTask?.cancel()
         scanTask = nil
         activeScanID = nil
+        pausedBucket = nil
         state = .idle
         progress = .zero
         currentScanLabel = ""
         scanStatusText = "准备扫描..."
+    }
+
+    /// iOS 在后台不保证相册请求继续执行。主动取消当前批次，回到前台后从该年份重新开始，
+    /// 避免半截扫描继续占用资源或留下不完整结果。
+    func pauseForBackground() {
+        guard case .scanning = state, let bucket = selectedBucket else { return }
+
+        pausedBucket = bucket
+        scanTask?.cancel()
+        scanTask = nil
+        activeScanID = nil
+        state = .idle
+        progress = .zero
+        scanStatusText = "扫描已暂停"
+        AnalyticsManager.shared.track(.scanPaused, properties: ["bucket": bucket.displayName])
+    }
+
+    func resumeAfterForeground() {
+        guard let bucket = pausedBucket else { return }
+        pausedBucket = nil
+        AnalyticsManager.shared.track(.scanResumed, properties: ["bucket": bucket.displayName])
+        selectBucket(bucket, forceRescan: true)
     }
 
     /// 清除某个 bucket 的缓存结果
@@ -221,6 +247,9 @@ final class PhotoScanner: ObservableObject {
                         similarGroups: [],
                         screenshots: [],
                         screenRecordings: [],
+                        lowQualityPhotos: [],
+                        cloudOnlyPhotoCount: 0,
+                        livePhotoCount: 0,
                         scanDuration: 0
                     )
                     self.yearResults[bucket] = empty
@@ -275,6 +304,16 @@ final class PhotoScanner: ObservableObject {
             // 阶段 6: 截图与录屏分类
             let screenshots = photos.filter { $0.isScreenshot }
             let recordings = photos.filter { $0.isScreenRecording }
+            let lowQualityPhotos = photos.filter {
+                $0.qualityIssueReason != nil &&
+                !$0.isScreenshot &&
+                !$0.isScreenRecording &&
+                !$0.isLivePhoto &&
+                !$0.isCloudOnly &&
+                !$0.asset.isFavorite
+            }
+            let cloudOnlyPhotoCount = photos.filter(\.isCloudOnly).count
+            let livePhotoCount = photos.filter(\.isLivePhoto).count
 
             let duration = Date().timeIntervalSince(startTime)
             let results = ScanResults(
@@ -283,6 +322,9 @@ final class PhotoScanner: ObservableObject {
                 similarGroups: similarGroups,
                 screenshots: screenshots,
                 screenRecordings: recordings,
+                lowQualityPhotos: lowQualityPhotos,
+                cloudOnlyPhotoCount: cloudOnlyPhotoCount,
+                livePhotoCount: livePhotoCount,
                 scanDuration: duration
             )
 
@@ -302,7 +344,10 @@ final class PhotoScanner: ObservableObject {
                     "duration_ms": Int(duration * 1000),
                     "duplicate_groups": duplicateGroups.count,
                     "similar_groups": similarGroups.count,
-                    "screenshots": screenshots.count
+                    "screenshots": screenshots.count,
+                    "low_quality_photos": lowQualityPhotos.count,
+                    "cloud_only_photos": cloudOnlyPhotoCount,
+                    "live_photos": livePhotoCount
                 ],
                 bucket: sizeBucket
             )
@@ -389,20 +434,22 @@ final class PhotoScanner: ObservableObject {
             }
 
             // 持续消费结果,并保持流水线满载
-            for await (i, item) in group {
+            var completedCount = 0
+            for await (_, item) in group {
                 if Task.isCancelled || !isActiveScan(scanID) {
                     group.cancelAll()
                     break
                 }
 
                 inFlight -= 1
+                completedCount += 1
                 if let item = item {
                     processed.append(item)
                 }
 
                 // 进度节流:每 20 张或最后一张更新
-                if i % 20 == 0 || i == total - 1 {
-                    let snapshot = processed.count
+                if completedCount % 20 == 0 || completedCount == total {
+                    let snapshot = completedCount
                     await MainActor.run {
                         guard self.isActiveScan(scanID) else { return }
                         self.progress = ScanProgress(current: snapshot, total: total)
@@ -440,10 +487,15 @@ final class PhotoScanner: ObservableObject {
 
         var pHashValue: UInt64? = nil
         var colorSignature: ColorSignature? = nil
+        var technicalQualityScore: Double? = nil
+        var qualityIssueReason: String? = nil
 
         if let img = analysisImage {
             pHashValue = SimilarityDetector.computePHash(from: img)
             colorSignature = SimilarityDetector.computeColorSignature(from: img)
+            let technicalAssessment = PhotoQualityScorer.assessTechnicalQuality(img)
+            technicalQualityScore = technicalAssessment.score
+            qualityIssueReason = technicalAssessment.issueReason
         }
 
         return PhotoItem(
@@ -461,7 +513,9 @@ final class PhotoScanner: ObservableObject {
             pixelHeight: asset.pixelHeight,
             colorSignature: colorSignature,
             qualityScore: nil,
-            qualityReason: nil
+            qualityReason: nil,
+            technicalQualityScore: technicalQualityScore,
+            qualityIssueReason: qualityIssueReason
         )
     }
 

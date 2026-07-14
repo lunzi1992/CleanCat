@@ -5,6 +5,7 @@ import SwiftUI
 struct SimilarListView: View {
     let groups: [SimilarGroup]
     @Binding var selectedPhotos: Set<String>
+    let protectedPhotoIDs: Set<String>
     @EnvironmentObject var appState: AppState
     @State private var didTrackPreviewExhausted = false
 
@@ -53,6 +54,7 @@ struct SimilarListView: View {
                         SimilarGroupCard(
                             group: group,
                             selectedPhotos: $selectedPhotos,
+                            protectedPhotoIDs: protectedPhotoIDs,
                             showsBestRecommendation: appState.isPro || index < freeThreshold,
                             lockedReason: (!appState.isPro && index >= freeThreshold) ? "手动检查" : nil
                         )
@@ -92,8 +94,9 @@ struct SimilarListView: View {
             properties: ["source": "similar", "group_count": highConfidenceGroups.count]
         )
         for group in highConfidenceGroups {
-            let sorted = group.photos.sorted { ($0.qualityScore ?? 0) > ($1.qualityScore ?? 0) }
+            let sorted = group.photos.sorted(by: PhotoItem.isPreferredForRecommendation)
             for photo in sorted.dropFirst() {
+                guard !protectedPhotoIDs.contains(photo.id) else { continue }
                 selectedPhotos.insert(photo.id)
             }
         }
@@ -117,6 +120,7 @@ struct SimilarListView: View {
 struct SimilarGroupCard: View {
     let group: SimilarGroup
     @Binding var selectedPhotos: Set<String>
+    let protectedPhotoIDs: Set<String>
     let showsBestRecommendation: Bool
     let lockedReason: String?
     private let sortedPhotos: [PhotoItem]
@@ -125,21 +129,24 @@ struct SimilarGroupCard: View {
 
     @State private var isExpanded = false
     @State private var showsAllPhotos = false
+    @State private var previewStartID: String?
 
     private let initialPhotoLimit = 60
 
     init(
         group: SimilarGroup,
         selectedPhotos: Binding<Set<String>>,
+        protectedPhotoIDs: Set<String>,
         showsBestRecommendation: Bool,
         lockedReason: String?
     ) {
         self.group = group
         self._selectedPhotos = selectedPhotos
+        self.protectedPhotoIDs = protectedPhotoIDs
         self.showsBestRecommendation = showsBestRecommendation
         self.lockedReason = lockedReason
 
-        let sorted = group.photos.sorted { ($0.qualityScore ?? 0) > ($1.qualityScore ?? 0) }
+        let sorted = group.photos.sorted(by: PhotoItem.isPreferredForRecommendation)
         self.sortedPhotos = sorted
         self.bestPhotoID = sorted.first?.id
 
@@ -208,9 +215,11 @@ struct SimilarGroupCard: View {
                         PhotoThumbnailCell(
                             photo: photo,
                             isSelected: selectedPhotos.contains(photo.id),
-                            isKeep: showsBestRecommendation && photo.id == bestPhotoID,
+                            isKeep: protectedPhotoIDs.contains(photo.id) || (showsBestRecommendation && photo.id == bestPhotoID),
                             isBest: showsBestRecommendation && photo.id == bestPhotoID,
-                            bestReason: showsBestRecommendation && photo.id == bestPhotoID ? bestReasonText : nil
+                            bestReason: showsBestRecommendation && photo.id == bestPhotoID ? bestReasonText : nil,
+                            showsSelectionControl: !protectedPhotoIDs.contains(photo.id),
+                            onPreview: { previewStartID = photo.id }
                         ) {
                             toggleSelection(photo)
                         }
@@ -233,6 +242,22 @@ struct SimilarGroupCard: View {
         }
         .background(Color(.systemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 12))
+        .fullScreenCover(
+            isPresented: Binding(
+                get: { previewStartID != nil },
+                set: { if !$0 { previewStartID = nil } }
+            )
+        ) {
+            if let previewStartID {
+                SelectablePhotoPreviewPager(
+                    photos: sortedPhotos,
+                    initialPhotoID: previewStartID,
+                    selectedPhotos: $selectedPhotos,
+                    protectedPhotoIDs: protectedPhotoIDs,
+                    analyticsSource: "similar_preview"
+                )
+            }
+        }
     }
 
     private var visiblePhotos: [PhotoItem] {
@@ -241,6 +266,7 @@ struct SimilarGroupCard: View {
     }
 
     private func toggleSelection(_ photo: PhotoItem) {
+        guard !protectedPhotoIDs.contains(photo.id) else { return }
         if selectedPhotos.contains(photo.id) {
             selectedPhotos.remove(photo.id)
             AnalyticsManager.shared.track(

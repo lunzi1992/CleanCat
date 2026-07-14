@@ -18,7 +18,7 @@ struct CleanCatApp: App {
             ContentView()
                 .environmentObject(appState)
                 .preferredColorScheme(.none)
-                .onChange(of: scenePhase) { _, newPhase in
+                .onChange(of: scenePhase) { newPhase in
                     if newPhase == .active && SessionTracker.shared.millisecondsSinceLaunch > 1000 {
                         // 非首次启动的 active 状态 = app_reopen
                         AnalyticsManager.shared.track(.appReopen)
