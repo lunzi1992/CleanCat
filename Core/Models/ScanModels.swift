@@ -1,6 +1,29 @@
 import Foundation
 import Photos
 
+struct MediaCountSummary {
+    let photoCount: Int
+    let videoCount: Int
+
+    init(items: [PhotoItem]) {
+        videoCount = items.filter(\.isVideo).count
+        photoCount = items.count - videoCount
+    }
+
+    init(photoCount: Int, videoCount: Int) {
+        self.photoCount = photoCount
+        self.videoCount = videoCount
+    }
+
+    var totalCount: Int { photoCount + videoCount }
+
+    var countText: String {
+        if videoCount == 0 { return "\(photoCount) 张照片" }
+        if photoCount == 0 { return "\(videoCount) 个视频" }
+        return "\(photoCount) 张照片和 \(videoCount) 个视频"
+    }
+}
+
 /// 扫描结果总览
 struct ScanResults {
     let totalPhotoCount: Int
@@ -94,7 +117,34 @@ struct PhotoItem: Identifiable, Hashable {
     var technicalQualityScore: Double?
     var qualityIssueReason: String?
     var containsFace: Bool = false
-    
+    /// 是否已完成相似组主体校验。未完成时只能作为“谨慎检查”，不能进入高可信批量选择。
+    var subjectAssessmentCompleted: Bool = false
+
+    /// 视频关键帧的 pHash 数组（照片为空）。用于视频-视频、视频-照片相似判定。
+    var keyframePHashes: [UInt64] = []
+    /// 视频时长（秒）。用于低质量视频启发式。
+    var videoDuration: TimeInterval? = nil
+    /// 是否为视频资源（不含 Live Photo）。便于管线分支判断。
+    var isVideo: Bool = false
+    /// 主体特征（人脸 embedding + 宠物颜色签名）。相似检测时做同主体校验门。
+    var subjectDescriptor: SubjectDescriptor? = nil
+    /// 截图内容分类（仅截图有值）。用于按内容分组展示 + 敏感证件保护。
+    var screenshotCategory: ScreenshotCategory? = nil
+    /// Live Photo 视频部分首帧 pHash。与静态照 pHash 一起参与相似检测，
+    /// 让 Live Photo 能与同场景的普通视频/照片相互命中。
+    var livePhotoVideoPHash: UInt64? = nil
+
+    /// 统一的 pHash 视图：照片返回单元素数组，视频返回关键帧数组。
+    /// Live Photo 返回 [静态照, 视频首帧]（若有），任一对命中即视为视觉相似。
+    /// 相似检测在此之上做"任一对命中即相似"的判定。
+    var representativePHashes: [UInt64] {
+        if isVideo { return keyframePHashes }
+        var hashes: [UInt64] = []
+        if let p = pHash { hashes.append(p) }
+        if let v = livePhotoVideoPHash { hashes.append(v) }
+        return hashes
+    }
+
     func hash(into hasher: inout Hasher) {
         hasher.combine(id)
     }
@@ -182,13 +232,16 @@ struct SimilarGroup: Identifiable {
     }
 
     var confidence: RecommendationConfidence {
-        photos.contains(where: \.containsFace) ? .cautious : .high
+        let subjectAssessmentIncomplete = photos.contains { !$0.subjectAssessmentCompleted }
+        return subjectAssessmentIncomplete || photos.contains(where: \.containsFace) ? .cautious : .high
     }
 
     var reasonTags: [String] {
         var tags = ["视觉高度相似", "颜色构图接近", "同一时间段"]
         if photos.contains(where: \.containsFace) {
             tags.insert("含人脸，谨慎处理", at: 0)
+        } else if photos.contains(where: { !$0.subjectAssessmentCompleted }) {
+            tags.insert("主体未精检，建议逐张检查", at: 0)
         }
         return tags
     }

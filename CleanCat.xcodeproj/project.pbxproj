@@ -38,6 +38,9 @@
 		D78D4EA819E3D6131E92B522 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDF6397FEC957A40C2FFDDF5 /* AppState.swift */; };
 		DB9B874AA76885CF4300DC44 /* ScanErrorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B89A92896C7D4E123EF2C41F /* ScanErrorView.swift */; };
 		EAE9A842AE82FFCBB53E9209 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10903AC89A04B0563F02D0A8 /* OnboardingView.swift */; };
+		A1B2C3D4E5F60718293A4B5C /* SubjectDescriptor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B5D /* SubjectDescriptor.swift */; };
+		B2C3D4E5F607182939404B5E /* VideoKeyframeExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C3D4E5F607182939404B5F /* VideoKeyframeExtractor.swift */; };
+		C3D4E5F60718293940414B50 /* ScreenshotClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3D4E5F60718293940414B51 /* ScreenshotClassifier.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -68,6 +71,9 @@
 		B89A92896C7D4E123EF2C41F /* ScanErrorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanErrorView.swift; sourceTree = "<group>"; };
 		B9A2ACD1BD53730ED34E37AE /* ViewExtensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewExtensions.swift; sourceTree = "<group>"; };
 		BAD69AA6DA40F40423AE0B24 /* SimilarityDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimilarityDetector.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60718293A4B5D /* SubjectDescriptor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubjectDescriptor.swift; sourceTree = "<group>"; };
+		B2C3D4E5F607182939404B5F /* VideoKeyframeExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoKeyframeExtractor.swift; sourceTree = "<group>"; };
+		C3D4E5F60718293940414B51 /* ScreenshotClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenshotClassifier.swift; sourceTree = "<group>"; };
 		BE0C206D328F81A0690310B4 /* SimilarListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimilarListView.swift; sourceTree = "<group>"; };
 		BFCCAAAE471D6A28EA631247 /* MD5Hash.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MD5Hash.swift; sourceTree = "<group>"; };
 		C1E3F383C8470C182AB47AB9 /* ResultsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultsView.swift; sourceTree = "<group>"; };
@@ -169,6 +175,9 @@
 				BFCCAAAE471D6A28EA631247 /* MD5Hash.swift */,
 				8815E05B196D622A1F726B5E /* PhotoQualityScorer.swift */,
 				BAD69AA6DA40F40423AE0B24 /* SimilarityDetector.swift */,
+				A1B2C3D4E5F60718293A4B5D /* SubjectDescriptor.swift */,
+				B2C3D4E5F607182939404B5F /* VideoKeyframeExtractor.swift */,
+				C3D4E5F60718293940414B51 /* ScreenshotClassifier.swift */,
 			);
 			path = Detector;
 			sourceTree = "<group>";
@@ -320,6 +329,9 @@
 				24BDA02A4F1D582D46ED26EE /* MD5Hash.swift in Sources */,
 				98E31B1DBF542D1F5E639FC4 /* PhotoQualityScorer.swift in Sources */,
 				23FA62BE634E61133FB5633C /* SimilarityDetector.swift in Sources */,
+				A1B2C3D4E5F60718293A4B5C /* SubjectDescriptor.swift in Sources */,
+				B2C3D4E5F607182939404B5E /* VideoKeyframeExtractor.swift in Sources */,
+				C3D4E5F60718293940414B50 /* ScreenshotClassifier.swift in Sources */,
 				B1D19BB8F382885C7AA6BB9E /* ScanModels.swift in Sources */,
 				BB38DE8014400EA39161C6B3 /* DeleteManager.swift in Sources */,
 				8CC294D0BC0DE0B51AD096FF /* PhotoScanner.swift in Sources */,

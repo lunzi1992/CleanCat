@@ -3,8 +3,8 @@ import SwiftUI
 /// 主页面（扫描 + 结果，按年分桶版）
 struct MainTabView: View {
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var scanner: PhotoScanner
     @Environment(\.scenePhase) private var scenePhase
-    @StateObject private var scanner = PhotoScanner()
     @State private var showSettings = false
 
     var body: some View {

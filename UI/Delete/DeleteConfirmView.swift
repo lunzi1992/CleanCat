@@ -13,7 +13,7 @@ struct DeleteConfirmView: View {
 
     private let deleteManager = DeleteManager()
 
-    private var photoCount: Int { photos.count }
+    private var mediaSummary: MediaCountSummary { MediaCountSummary(items: photos) }
     private var spaceToFree: Int64 {
         photos.reduce(0) { $0 + $1.fileSize }
     }
@@ -68,7 +68,7 @@ struct DeleteConfirmView: View {
                     .foregroundColor(.sageDark)
 
                 VStack(spacing: 6) {
-                    Text("将删除 \(photoCount) 张照片")
+                    Text("将删除 \(mediaSummary.countText)")
                         .font(.headline)
                         .foregroundColor(.primary)
                     Text("释放约 \(formatBytes(spaceToFree)) 空间")
@@ -76,7 +76,7 @@ struct DeleteConfirmView: View {
                         .foregroundColor(.sage)
                 }
 
-                Text("照片将移至「最近删除」相簿\n30 天内可从系统「照片」App 中恢复")
+                Text("所选项目将移至「最近删除」相簿\n30 天内可从系统「照片」App 中恢复")
                     .font(.caption)
                     .foregroundColor(.warmGray)
                     .multilineTextAlignment(.center)
@@ -127,10 +127,10 @@ struct DeleteConfirmView: View {
 
             // 逐张淡出的照片图标
             ZStack {
-                ForEach(0..<min(photoCount, 8), id: \.self) { i in
+                ForEach(0..<min(mediaSummary.totalCount, 8), id: \.self) { i in
                     FarewellPhotoIcon(
                         index: i,
-                        total: min(photoCount, 8),
+                        total: min(mediaSummary.totalCount, 8),
                         startDelay: Double(i) * 0.08
                     )
                 }
@@ -139,7 +139,7 @@ struct DeleteConfirmView: View {
             .opacity(fadeOpacity)
 
             VStack(spacing: 12) {
-                Text("感谢这 \(photoCount) 张照片")
+                Text("正在整理 \(mediaSummary.countText)")
                     .font(.system(size: 22, weight: .bold, design: .rounded))
                     .foregroundColor(.sageDark)
                     .multilineTextAlignment(.center)

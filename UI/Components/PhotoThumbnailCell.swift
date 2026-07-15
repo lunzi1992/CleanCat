@@ -1,5 +1,6 @@
 import SwiftUI
 import Photos
+import AVKit
 
 /// 照片缩略图单元格
 struct PhotoThumbnailCell: View {
@@ -80,16 +81,33 @@ struct PhotoThumbnailCell: View {
                     .padding(6)
                 }
 
-                if !isKeep {
+                if photo.isVideo || !isKeep {
                     HStack {
-                        Spacer()
-                        Text(formatBytes(photo.fileSize))
-                            .font(.system(size: 9))
+                        if photo.isVideo, let duration = photo.videoDuration {
+                            HStack(spacing: 2) {
+                                Image(systemName: "video.fill")
+                                    .font(.system(size: 8))
+                                Text(formatDuration(duration))
+                                    .font(.system(size: 9))
+                            }
                             .foregroundColor(.white)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background(Color.black.opacity(0.5))
+                            .background(Color.black.opacity(0.55))
                             .clipShape(Capsule())
+                        }
+
+                        Spacer()
+
+                        if !isKeep {
+                            Text(formatBytes(photo.fileSize))
+                                .font(.system(size: 9))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.black.opacity(0.5))
+                                .clipShape(Capsule())
+                        }
                     }
                     .padding(6)
                 }
@@ -153,6 +171,13 @@ struct PhotoThumbnailCell: View {
 
     private func formatBytes(_ bytes: Int64) -> String {
         ByteCountFormatter().string(fromByteCount: bytes)
+    }
+
+    private func formatDuration(_ seconds: TimeInterval) -> String {
+        let total = Int(seconds.rounded())
+        let mins = total / 60
+        let secs = total % 60
+        return String(format: "%d:%02d", mins, secs)
     }
 }
 
@@ -274,73 +299,8 @@ struct SelectablePhotoPreviewPager: View {
 private struct SelectablePhotoPreviewPage: View {
     let photo: PhotoItem
 
-    @State private var image: UIImage?
-    @State private var requestID: PHImageRequestID?
-    @State private var didFinishLoading = false
-
     var body: some View {
-        Group {
-            if let image {
-                Image(uiImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .ignoresSafeArea()
-            } else if didFinishLoading {
-                VStack(spacing: 12) {
-                    Image(systemName: "icloud.and.arrow.down")
-                        .font(.system(size: 36))
-                    Text("这张照片可能仅保存在 iCloud 中")
-                        .font(.headline)
-                    Text("当前不会自动下载云端原图")
-                        .font(.caption)
-                }
-                .foregroundColor(.white.opacity(0.85))
-                .multilineTextAlignment(.center)
-                .padding()
-            } else {
-                ProgressView()
-                    .tint(.white)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onAppear { loadPreviewImage() }
-        .onDisappear { cancelPreviewRequest() }
-    }
-
-    private func loadPreviewImage() {
-        guard image == nil, requestID == nil else { return }
-
-        let options = PHImageRequestOptions()
-        options.deliveryMode = .highQualityFormat
-        options.resizeMode = .none
-        options.isSynchronous = false
-        options.isNetworkAccessAllowed = false
-
-        let screen = UIScreen.main.bounds.size
-        let scale = UIScreen.main.scale
-        let targetSize = CGSize(width: screen.width * scale, height: screen.height * scale)
-
-        requestID = PHImageManager.default().requestImage(
-            for: photo.asset,
-            targetSize: targetSize,
-            contentMode: .aspectFit,
-            options: options
-        ) { image, info in
-            if let cancelled = info?[PHImageCancelledKey] as? Bool, cancelled {
-                return
-            }
-            DispatchQueue.main.async {
-                self.image = image
-                self.didFinishLoading = true
-                self.requestID = nil
-            }
-        }
-    }
-
-    private func cancelPreviewRequest() {
-        guard let requestID else { return }
-        PHImageManager.default().cancelImageRequest(requestID)
-        self.requestID = nil
+        CloudMediaPreviewContent(photo: photo)
     }
 }
 
@@ -348,35 +308,11 @@ struct PhotoPreviewView: View {
     let photo: PhotoItem
 
     @Environment(\.dismiss) private var dismiss
-    @State private var image: UIImage?
-    @State private var requestID: PHImageRequestID?
-    @State private var didFinishLoading = false
-
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
 
-            if let image {
-                Image(uiImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .ignoresSafeArea()
-            } else if didFinishLoading {
-                VStack(spacing: 12) {
-                    Image(systemName: "icloud.and.arrow.down")
-                        .font(.system(size: 36))
-                    Text("这张照片可能仅保存在 iCloud 中")
-                        .font(.headline)
-                    Text("当前不会自动下载云端原图")
-                        .font(.caption)
-                }
-                .foregroundColor(.white.opacity(0.85))
-                .multilineTextAlignment(.center)
-                .padding()
-            } else {
-                ProgressView()
-                    .tint(.white)
-            }
+            CloudMediaPreviewContent(photo: photo)
 
             VStack {
                 HStack {
@@ -397,18 +333,84 @@ struct PhotoPreviewView: View {
                 Spacer()
             }
         }
-        .onAppear { loadPreviewImage() }
-        .onDisappear { cancelPreviewRequest() }
+    }
+}
+
+private struct CloudMediaPreviewContent: View {
+    let photo: PhotoItem
+
+    @State private var image: UIImage?
+    @State private var player: AVPlayer?
+    @State private var requestID: PHImageRequestID?
+    @State private var progress: Double = 0
+    @State private var loadError: String?
+
+    var body: some View {
+        Group {
+            if photo.isVideo, let player {
+                VideoPlayer(player: player)
+                    .onAppear { player.play() }
+            } else if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .ignoresSafeArea()
+            } else if let loadError {
+                VStack(spacing: 14) {
+                    Image(systemName: "exclamationmark.icloud")
+                        .font(.system(size: 36))
+                    Text(loadError)
+                        .font(.headline)
+                    Button("重新加载", action: retry)
+                        .buttonStyle(.borderedProminent)
+                }
+                .foregroundColor(.white.opacity(0.9))
+            } else {
+                VStack(spacing: 12) {
+                    if progress > 0 {
+                        ProgressView(value: progress)
+                            .frame(width: 180)
+                        Text("\(Int(progress * 100))%")
+                            .font(.caption.monospacedDigit())
+                    } else {
+                        ProgressView()
+                    }
+                    Text(photo.isVideo ? "正在从 iCloud 加载视频..." : "正在从 iCloud 加载照片...")
+                        .font(.caption)
+                }
+                .tint(.white)
+                .foregroundColor(.white.opacity(0.85))
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear { loadMedia() }
+        .onDisappear { cancelRequest() }
     }
 
-    private func loadPreviewImage() {
-        guard image == nil, requestID == nil else { return }
+    private func loadMedia() {
+        guard image == nil, player == nil, requestID == nil else { return }
+        loadError = nil
+        progress = 0
 
+        if photo.isVideo {
+            loadVideo()
+        } else {
+            loadPhoto()
+        }
+    }
+
+    private func loadPhoto() {
         let options = PHImageRequestOptions()
         options.deliveryMode = .highQualityFormat
         options.resizeMode = .none
         options.isSynchronous = false
-        options.isNetworkAccessAllowed = false
+        options.isNetworkAccessAllowed = true
+        options.progressHandler = { value, error, _, _ in
+            DispatchQueue.main.async {
+                progress = value
+                if let error { loadError = error.localizedDescription }
+            }
+        }
 
         let screen = UIScreen.main.bounds.size
         let scale = UIScreen.main.scale
@@ -419,21 +421,61 @@ struct PhotoPreviewView: View {
             targetSize: targetSize,
             contentMode: .aspectFit,
             options: options
-        ) { image, info in
-            if let cancelled = info?[PHImageCancelledKey] as? Bool, cancelled {
-                return
-            }
+        ) { result, info in
+            if let cancelled = info?[PHImageCancelledKey] as? Bool, cancelled { return }
+            let degraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
             DispatchQueue.main.async {
-                self.image = image
-                self.didFinishLoading = true
-                self.requestID = nil
+                if let result { image = result }
+                if !degraded {
+                    requestID = nil
+                    if result == nil, loadError == nil {
+                        loadError = "无法加载这张照片，请检查网络后重试"
+                    }
+                }
             }
         }
     }
 
-    private func cancelPreviewRequest() {
-        guard let requestID else { return }
-        PHImageManager.default().cancelImageRequest(requestID)
-        self.requestID = nil
+    private func loadVideo() {
+        let options = PHVideoRequestOptions()
+        options.deliveryMode = .automatic
+        options.isNetworkAccessAllowed = true
+        options.progressHandler = { value, error, _, _ in
+            DispatchQueue.main.async {
+                progress = value
+                if let error { loadError = error.localizedDescription }
+            }
+        }
+
+        requestID = PHImageManager.default().requestPlayerItem(
+            forVideo: photo.asset,
+            options: options
+        ) { item, info in
+            if let cancelled = info?[PHImageCancelledKey] as? Bool, cancelled { return }
+            DispatchQueue.main.async {
+                requestID = nil
+                if let item {
+                    player = AVPlayer(playerItem: item)
+                    player?.play()
+                } else if loadError == nil {
+                    loadError = "无法加载这个视频，请检查网络后重试"
+                }
+            }
+        }
+    }
+
+    private func retry() {
+        cancelRequest()
+        image = nil
+        player = nil
+        loadMedia()
+    }
+
+    private func cancelRequest() {
+        player?.pause()
+        if let requestID {
+            PHImageManager.default().cancelImageRequest(requestID)
+            self.requestID = nil
+        }
     }
 }

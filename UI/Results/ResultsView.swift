@@ -10,8 +10,8 @@ struct ResultsView: View {
     @State private var cleanupSummary: CleanupSummary?
 
     enum ResultTab: String, CaseIterable {
-        case duplicates = "重复照片"
-        case similar = "相似照片"
+        case duplicates = "重复"
+        case similar = "相似"
         case screenshots = "截图"
         case lowQuality = "待检查"
 
@@ -59,6 +59,7 @@ struct ResultsView: View {
         .sheet(item: $cleanupSummary) { summary in
             CleanupResultView(
                 photoCount: summary.photoCount,
+                videoCount: summary.videoCount,
                 spaceFreed: summary.spaceFreed,
                 failedCount: summary.failedCount,
                 bucketLabel: summary.bucketLabel,
@@ -86,11 +87,11 @@ struct ResultsView: View {
                         .font(Design.headlineFont)
                         .foregroundColor(.sageDark)
 
-                    Text("共 \(results.totalPhotoCount) 张照片,耗时 \(String(format: "%.1f", results.scanDuration)) 秒")
+                    Text("共扫描 \(results.totalPhotoCount) 个媒体项目，耗时 \(String(format: "%.1f", results.scanDuration)) 秒")
                         .font(.caption)
                         .foregroundColor(.warmGray)
 
-                    if results.cloudOnlyPhotoCount > 0 || results.livePhotoCount > 0 {
+                    if results.cloudOnlyPhotoCount > 0 {
                         Text(analysisCoverageText)
                             .font(.caption2)
                             .foregroundColor(.warmGray)
@@ -241,8 +242,9 @@ struct ResultsView: View {
     // MARK: - Bottom Action Bar
 
     private var bottomActionBar: some View {
-        HStack {
-            Text("已选 \(selectedPhotos.count) 张")
+        let summary = MediaCountSummary(items: selectedPhotoItems())
+        return HStack {
+            Text("已选 \(summary.countText)")
                 .font(.system(size: 15, weight: .semibold, design: .rounded))
                 .foregroundColor(.sageDark)
 
@@ -252,11 +254,14 @@ struct ResultsView: View {
                 catHaptic(.medium)
                 AnalyticsManager.shared.track(
                     .deleteConfirmed,
-                    properties: ["photo_count": selectedPhotos.count]
+                    properties: [
+                        "photo_count": summary.photoCount,
+                        "video_count": summary.videoCount
+                    ]
                 )
                 showDeleteConfirm = true
             }) {
-                Text("删除 \(selectedPhotos.count) 张")
+                Text("删除 \(summary.countText)")
                     .font(.system(size: 16, weight: .bold, design: .rounded))
                     .foregroundColor(.appDanger)
                     .padding(.horizontal, 22)
@@ -313,17 +318,17 @@ struct ResultsView: View {
     private var analysisCoverageText: String {
         var items: [String] = []
         if results.cloudOnlyPhotoCount > 0 {
-            items.append("\(results.cloudOnlyPhotoCount) 张仅在 iCloud，未纳入相似分析")
-        }
-        if results.livePhotoCount > 0 {
-            items.append("\(results.livePhotoCount) 张 Live Photo 暂不纳入相似分析")
+            items.append("\(results.cloudOnlyPhotoCount) 个项目仅在 iCloud，未纳入相似分析")
         }
         return items.joined(separator: " · ")
     }
 
     private func handleDeleteResult(_ result: DeleteManager.DeleteResult) {
+        let selectedItems = selectedPhotoItems()
         let failedIDs = Set(result.failedIDs)
         let deletedIDs = Set(selectedPhotos).subtracting(failedIDs)
+        let deletedItems = selectedItems.filter { deletedIDs.contains($0.id) }
+        let mediaSummary = MediaCountSummary(items: deletedItems)
         let currentBucket = scanner.selectedBucket
         let nextBucket = previousYearBucket(after: currentBucket)
 
@@ -338,7 +343,8 @@ struct ResultsView: View {
         AnalyticsManager.shared.track(
             .deleteCompleted,
             properties: [
-                "photo_count": result.successCount,
+                "photo_count": mediaSummary.photoCount,
+                "video_count": mediaSummary.videoCount,
                 "failed_count": result.failedCount,
                 "space_freed_mb": Int(result.freedSpace / 1_048_576),
                 "bucket": currentBucket?.displayName ?? "unknown"
@@ -346,7 +352,8 @@ struct ResultsView: View {
         )
 
         let summary = CleanupSummary(
-            photoCount: result.successCount,
+            photoCount: mediaSummary.photoCount,
+            videoCount: mediaSummary.videoCount,
             spaceFreed: result.freedSpace,
             failedCount: result.failedCount,
             bucketLabel: currentBucket?.displayName,
@@ -390,6 +397,7 @@ struct ResultsView: View {
 private struct CleanupSummary: Identifiable {
     let id = UUID()
     let photoCount: Int
+    let videoCount: Int
     let spaceFreed: Int64
     let failedCount: Int
     let bucketLabel: String?

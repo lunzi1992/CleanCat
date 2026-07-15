@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 截图/录屏列表
+/// 截图/录屏列表（截图按内容分类分组，敏感证件受保护）
 struct ScreenshotListView: View {
     let screenshots: [PhotoItem]
     let recordings: [PhotoItem]
@@ -15,6 +15,22 @@ struct ScreenshotListView: View {
     private var totalSpace: Int64 {
         screenshots.reduce(0) { $0 + $1.fileSize } +
         recordings.reduce(0) { $0 + $1.fileSize }
+    }
+
+    /// 按分类分组，保持枚举顺序（敏感证件在前，普通在后）
+    private var categorizedScreenshots: [(ScreenshotCategory, [PhotoItem])] {
+        let grouped = Dictionary(grouping: screenshots) { $0.screenshotCategory ?? .ordinary }
+        return ScreenshotCategory.allCases.compactMap { cat in
+            let items = (grouped[cat] ?? []).sorted {
+                ($0.creationDate ?? .distantPast) > ($1.creationDate ?? .distantPast)
+            }
+            return items.isEmpty ? nil : (cat, items)
+        }
+    }
+
+    /// 扁平化的截图列表，顺序与网格展示完全一致，供预览 pager 使用
+    private var flatScreenshotsForPreview: [PhotoItem] {
+        categorizedScreenshots.flatMap { $0.1 }
     }
 
     var body: some View {
@@ -36,19 +52,18 @@ struct ScreenshotListView: View {
                         selectAll()
                     }
 
-                    if !screenshots.isEmpty {
-                        sectionHeader("截图", count: screenshots.count)
+                    ForEach(categorizedScreenshots, id: \.0) { category, items in
+                        categoryHeader(category, count: items.count)
                         LazyVGrid(columns: [
                             GridItem(.flexible(), spacing: 8),
                             GridItem(.flexible(), spacing: 8),
                             GridItem(.flexible(), spacing: 8)
-                        ], spacing: 8) {
-                            ForEach(screenshots) { photo in
-                                PhotoThumbnailCell(
+                        ], spacing: 12) {
+                            ForEach(items) { photo in
+                                ScreenshotCell(
                                     photo: photo,
                                     isSelected: selectedPhotos.contains(photo.id),
-                                    isKeep: protectedPhotoIDs.contains(photo.id),
-                                    showsSelectionControl: !protectedPhotoIDs.contains(photo.id),
+                                    isProtected: isProtected(photo),
                                     onPreview: { previewStartID = photo.id }
                                 ) {
                                     toggleSelection(photo)
@@ -82,13 +97,40 @@ struct ScreenshotListView: View {
         ) {
             if let previewStartID {
                 SelectablePhotoPreviewPager(
-                    photos: screenshots,
+                    photos: flatScreenshotsForPreview,
                     initialPhotoID: previewStartID,
                     selectedPhotos: $selectedPhotos,
                     protectedPhotoIDs: protectedPhotoIDs,
                     analyticsSource: "screenshot_preview"
                 )
             }
+        }
+    }
+
+    private func isProtected(_ photo: PhotoItem) -> Bool {
+        protectedPhotoIDs.contains(photo.id) || (photo.screenshotCategory?.isProtected ?? false)
+    }
+
+    private func categoryHeader(_ category: ScreenshotCategory, count: Int) -> some View {
+        HStack {
+            Image(systemName: category.icon)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(category.isProtected ? .sage : .sageDark)
+            Text(category.rawValue)
+                .font(.headline)
+            Text("· \(count) 项")
+                .font(.subheadline)
+                .foregroundColor(.warmGray)
+            if category.isProtected {
+                Text("受保护")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(.sage)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.sage.opacity(0.15))
+                    .clipShape(Capsule())
+            }
+            Spacer()
         }
     }
 
@@ -113,7 +155,7 @@ struct ScreenshotListView: View {
             ]
         )
         for photo in screenshots {
-            guard !protectedPhotoIDs.contains(photo.id) else { continue }
+            guard !isProtected(photo) else { continue }
             selectedPhotos.insert(photo.id)
         }
         for recording in recordings {
@@ -123,7 +165,7 @@ struct ScreenshotListView: View {
     }
 
     private func toggleSelection(_ photo: PhotoItem) {
-        guard !protectedPhotoIDs.contains(photo.id) else { return }
+        guard !isProtected(photo) else { return }
         if selectedPhotos.contains(photo.id) {
             selectedPhotos.remove(photo.id)
             AnalyticsManager.shared.track(
@@ -136,6 +178,41 @@ struct ScreenshotListView: View {
                 .photoSelected,
                 properties: ["source": photo.isScreenRecording ? "screen_recording" : "screenshot", "photo_id": photo.id]
             )
+        }
+    }
+}
+
+// MARK: - 截图单元格（含过期提示）
+
+private struct ScreenshotCell: View {
+    let photo: PhotoItem
+    let isSelected: Bool
+    let isProtected: Bool
+    let onPreview: () -> Void
+    let onTap: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            PhotoThumbnailCell(
+                photo: photo,
+                isSelected: isSelected,
+                isKeep: isProtected,
+                showsSelectionControl: !isProtected,
+                onPreview: onPreview,
+                onTap: onTap
+            )
+
+            if let cat = photo.screenshotCategory, cat.isDisposable {
+                if ScreenshotClassifier.isExpired(cat, creationDate: photo.creationDate) {
+                    Text("已过期 · 建议删除")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(.appDanger)
+                } else {
+                    Text("近期保留")
+                        .font(.system(size: 10))
+                        .foregroundColor(.warmGray)
+                }
+            }
         }
     }
 }
@@ -221,7 +298,7 @@ struct LowQualityListView: View {
                     .background(Color.sage.opacity(0.10))
                     .clipShape(RoundedRectangle(cornerRadius: 10))
 
-                    Text("(photos.count) 张待检查")
+                    Text("\(photos.count) 张待检查")
                         .font(.headline)
                         .foregroundColor(.sageDark)
 

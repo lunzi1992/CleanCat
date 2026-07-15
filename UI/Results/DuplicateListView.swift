@@ -85,7 +85,7 @@ struct DuplicateGroupCard: View {
 
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) {
-                            Text("\(group.photos.count) 张完全相同的照片")
+                            Text("\(group.photos.count) \(duplicateNoun(for: group))")
                                 .font(.subheadline)
                                 .fontWeight(.medium)
 
@@ -165,6 +165,22 @@ struct DuplicateGroupCard: View {
     private var visiblePhotos: [PhotoItem] {
         if showsAllPhotos { return group.photos }
         return Array(group.photos.prefix(initialPhotoLimit))
+    }
+
+    /// 根据组内资源类型返回合适的名词："张完全相同的照片" / "个完全相同的视频" / "个完全相同的照片/视频"
+    private func duplicateNoun(for group: DuplicateGroup) -> String {
+        let hasVideo = group.photos.contains { $0.isVideo }
+        let hasLivePhoto = group.photos.contains { $0.isLivePhoto }
+        let hasPhoto = group.photos.contains { !$0.isVideo && !$0.isLivePhoto }
+
+        if hasVideo && !hasPhoto && !hasLivePhoto {
+            return "个完全相同的视频"
+        } else if hasVideo {
+            // 混合类型（理论上有 hash 前缀隔离不应出现，兜底）
+            return "个完全相同的照片/视频"
+        } else {
+            return "张完全相同的照片"
+        }
     }
 
     private func toggleSelection(_ photo: PhotoItem) {

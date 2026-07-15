@@ -1,8 +1,8 @@
 import Foundation
 import Photos
 
-/// 照片删除管理器
-/// 将照片移至「最近删除」而非永久删除，提供 30 天恢复窗口
+/// 照片与视频删除管理器
+/// 将所选项目移至「最近删除」而非永久删除，提供 30 天恢复窗口
 final class DeleteManager {
     
     /// 删除结果

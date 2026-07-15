@@ -3,6 +3,7 @@ import SwiftUI
 @main
 struct CleanCatApp: App {
     @StateObject private var appState = AppState()
+    @StateObject private var scanner = PhotoScanner()
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -17,8 +18,9 @@ struct CleanCatApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(appState)
+                .environmentObject(scanner)
                 .preferredColorScheme(.none)
-                .onChange(of: scenePhase) { newPhase in
+                .onChange(of: scenePhase) { _, newPhase in
                     if newPhase == .active && SessionTracker.shared.millisecondsSinceLaunch > 1000 {
                         // 非首次启动的 active 状态 = app_reopen
                         AnalyticsManager.shared.track(.appReopen)

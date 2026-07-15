@@ -24,6 +24,19 @@ final class SimilarityDetector {
 
     /// 宽高比允许轻微裁切差异，但不把横竖构图混成一组。
     private static let maxAspectLogDistance = 0.12
+
+    private static let pHashInputSize = 32
+    private static let pHashDCTSize = 8
+    private static let pHashCosineX: [[Double]] = (0..<pHashDCTSize).map { u in
+        (0..<pHashInputSize).map { x in
+            cos(Double((2 * x + 1) * u) * .pi / Double(2 * pHashInputSize))
+        }
+    }
+    private static let pHashCosineY: [[Double]] = (0..<pHashDCTSize).map { v in
+        (0..<pHashInputSize).map { y in
+            cos(Double((2 * y + 1) * v) * .pi / Double(2 * pHashInputSize))
+        }
+    }
     
     // MARK: - pHash 计算
     
@@ -33,7 +46,7 @@ final class SimilarityDetector {
         guard let cgImage = image.cgImage else { return 0 }
         
         // 1. 缩放到 32x32（为后续 DCT 准备）
-        let size = CGSize(width: 32, height: 32)
+        let size = CGSize(width: pHashInputSize, height: pHashInputSize)
         UIGraphicsBeginImageContextWithOptions(size, true, 1.0)
         defer { UIGraphicsEndImageContext() }
         
@@ -50,8 +63,8 @@ final class SimilarityDetector {
         
         let data = CFDataGetBytePtr(pixelData)
         let bytesPerPixel = 4
-        let width = 32
-        let height = 32
+        let width = pHashInputSize
+        let height = pHashInputSize
         
         var grayPixels: [Double] = []
         grayPixels.reserveCapacity(width * height)
@@ -69,7 +82,7 @@ final class SimilarityDetector {
         }
         
         // 3. 简化的 DCT 变换（只取 8x8 低频部分）
-        let dctSize = 8
+        let dctSize = pHashDCTSize
         var dctMatrix: [Double] = Array(repeating: 0, count: dctSize * dctSize)
         
         for u in 0..<dctSize {
@@ -78,9 +91,7 @@ final class SimilarityDetector {
                 for x in 0..<width {
                     for y in 0..<height {
                         let pixel = grayPixels[y * width + x]
-                        sum += pixel *
-                            cos(Double((2 * x + 1) * u) * .pi / Double(2 * width)) *
-                            cos(Double((2 * y + 1) * v) * .pi / Double(2 * height))
+                        sum += pixel * pHashCosineX[u][x] * pHashCosineY[v][y]
                     }
                 }
                 let cu = u == 0 ? 1.0 / sqrt(2.0) : 1.0
@@ -211,8 +222,9 @@ final class SimilarityDetector {
     
     /// 检测相似照片并分组
     func detectSimilar(in photos: [PhotoItem]) -> [SimilarGroup] {
-        // 只处理有 pHash 值的照片
-        let validPhotos = photos.filter { $0.pHash != nil && $0.asset.mediaType == .image && !$0.isLivePhoto && !$0.isCloudOnly }
+        // 照片用 pHash，视频用 keyframePHashes，Live Photo 用 [静态照, 视频首帧]
+        // 通过 representativePHashes 统一访问
+        let validPhotos = photos.filter { !$0.representativePHashes.isEmpty && !$0.isCloudOnly }
         guard validPhotos.count >= SimilarityDetector.minGroupSize else { return [] }
         
         let sortedPhotos = validPhotos.sorted {
@@ -267,19 +279,51 @@ final class SimilarityDetector {
     }
 
     private func arePairwiseSimilar(_ lhs: PhotoItem, _ rhs: PhotoItem) -> Bool {
-        guard let lhsHash = lhs.pHash,
-              let rhsHash = rhs.pHash else { return false }
+        let lhsHashes = lhs.representativePHashes
+        let rhsHashes = rhs.representativePHashes
+        guard !lhsHashes.isEmpty, !rhsHashes.isEmpty else { return false }
 
-        let hashDistance = SimilarityDetector.hammingDistance(lhsHash, rhsHash)
-        guard hashDistance <= SimilarityDetector.hammingThreshold else { return false }
-        guard isCaptureTimeClose(lhs, rhs, hashDistance: hashDistance) else { return false }
+        // 视频-照片混合相似误判风险高（关键帧 vs 静态照场景不同），默认不做。
+        // Live Photo 不算视频：它本质是照片，representativePHashes 含静态照，可正常参与。
+        if lhs.isVideo != rhs.isVideo {
+            return false
+        }
+
+        // 统计命中对数 + 最小距离
+        var minDistance = Int.max
+        var hitPairs = 0
+        for lHash in lhsHashes {
+            for rHash in rhsHashes {
+                let d = SimilarityDetector.hammingDistance(lHash, rHash)
+                if d < minDistance { minDistance = d }
+                if d <= SimilarityDetector.hammingThreshold {
+                    hitPairs += 1
+                }
+            }
+        }
+
+        // 视频-视频：要求至少 2 对关键帧命中，避免单帧巧合（黑场/天空/晚霞/舞台灯光）
+        if lhs.isVideo && rhs.isVideo {
+            guard hitPairs >= 2 else { return false }
+        } else {
+            guard minDistance <= SimilarityDetector.hammingThreshold else { return false }
+        }
+
+        guard isCaptureTimeClose(lhs, rhs, hashDistance: minDistance) else { return false }
         guard isAspectRatioClose(lhs, rhs) else { return false }
+
+        // 主体校验门：视觉相似但主体不同（如不同人正脸、人脸 vs 宠物）→ 拒绝分组
+        // 无法判定主体时放行，不做过激拒绝
+        guard SubjectDescriptorExtractor.sameSubject(lhs.subjectDescriptor, rhs.subjectDescriptor) else {
+            return false
+        }
 
         if let lhsColor = lhs.colorSignature, let rhsColor = rhs.colorSignature {
             return colorDistance(lhsColor, rhsColor) <= SimilarityDetector.maxColorDistance
         }
 
-        return hashDistance <= 3
+        // 缺少颜色签名（视频、部分照片）：收紧阈值，保守分组
+        return minDistance <= 3
     }
 
     private func isCaptureTimeClose(_ lhs: PhotoItem, _ rhs: PhotoItem, hashDistance: Int) -> Bool {

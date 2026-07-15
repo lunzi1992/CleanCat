@@ -23,6 +23,15 @@ final class PhotoScanner: ObservableObject {
     private var activeScanID: UUID?
     private var pausedBucket: YearBucket?
 
+    /// 视频相似深度扫描开关。
+    /// 关闭时：视频不抽帧、不计算 pHash/主体，也不参与相似检测；完全重复仍通过文件哈希确认。
+    /// 开启时：视频抽 4 帧 + pHash + 主体特征，参与相似检测（成本高，大相册可能卡顿）。
+    /// MVP 默认关闭，保证扫描稳定；后续可暴露为用户可切换的设置项。
+    nonisolated static let enableVideoSimilarityScan = false
+    /// 每次扫描最多精检的相似候选。其余组降为“谨慎检查”，不进入批量建议。
+    /// 固定预算让按年份与全量扫描的尾处理耗时都可控。
+    nonisolated private static let maxSubjectValidationPhotos = 96
+
     /// 全局内存压力观察者（OOM 保护）
     private var memoryWarningObserver: NSObjectProtocol?
 
@@ -33,8 +42,8 @@ final class PhotoScanner: ObservableObject {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                // 内存警告：清空所有结果缓存
-                self?.yearResults.removeAll()
+                // 扫描结果只保存轻量特征和 PHAsset 引用，保留它们才能在前后台切换后继续展示。
+                // 内存压力下仅释放 PhotoKit 的图片缓存。
                 self?.imageManager.stopCachingImagesForAllAssets()
             }
         }
@@ -294,12 +303,28 @@ final class PhotoScanner: ObservableObject {
             }.value
             try Task.checkCancellation()
 
+            // 主体特征按固定预算惰性提取。精检完成的组才可能成为“高可信”；
+            // 超出预算或图片不可用的组保留为“谨慎检查”，避免尾处理时间随年份照片量失控。
+            let similarCandidateCount = Set(similarGroups.flatMap { $0.photos.map(\.id) }).count
+            if similarCandidateCount > 0 {
+                await MainActor.run {
+                    guard self.isActiveScan(scanID) else { return }
+                    self.scanStatusText = "正在校验相似照片主体..."
+                }
+                photos = await enrichSubjectDescriptors(in: photos, similarGroups: similarGroups, scanID: scanID)
+                try Task.checkCancellation()
+                similarGroups = await Task.detached(priority: .userInitiated) {
+                    SimilarityDetector().detectSimilar(in: photos)
+                }.value
+            }
+
             await MainActor.run {
                 guard self.isActiveScan(scanID) else { return }
                 self.scanStatusText = "正在评估建议保留照片..."
             }
 
-            similarGroups = await applyQualityScores(in: similarGroups, scanID: scanID)
+            // 清晰度、曝光、对比度已在首次拉图时计算；这里直接复用，避免再次请求图片和跑 Vision。
+            similarGroups = groupsWithScanQuality(similarGroups)
 
             // 阶段 6: 截图与录屏分类
             let screenshots = photos.filter { $0.isScreenshot }
@@ -399,11 +424,8 @@ final class PhotoScanner: ObservableObject {
         var all: [PHAsset] = []
         all.reserveCapacity(imageAssets.count + videoAssets.count)
         imageAssets.enumerateObjects { asset, _, _ in all.append(asset) }
-        videoAssets.enumerateObjects { asset, _, _ in
-            if asset.mediaSubtypes.contains(.videoScreenRecording) {
-                all.append(asset)
-            }
-        }
+        // 视频全量纳入：普通视频参与重复/相似/低质量检测，录屏仍归入截图桶
+        videoAssets.enumerateObjects { asset, _, _ in all.append(asset) }
         return all
     }
 
@@ -473,36 +495,119 @@ final class PhotoScanner: ObservableObject {
         return processed
     }
 
-    /// 处理单张照片:pHash + MD5 + 元数据
+    /// 处理单个资源：照片走 pHash + 质量评分；视频走关键帧 pHash + 低质量启发式
     private nonisolated func processOneAsset(_ asset: PHAsset) async -> PhotoItem {
         let isScreenshot = asset.mediaSubtypes.contains(.photoScreenshot)
         let isScreenRecording = asset.mediaSubtypes.contains(.videoScreenRecording)
         let isLivePhoto = asset.mediaSubtypes.contains(.photoLive)
+        let isVideoAsset = asset.mediaType == .video && !isLivePhoto
 
         let resources = PHAssetResource.assetResources(for: asset)
         let fileSize = resources.first?.value(forKey: "fileSize") as? Int64 ?? 0
 
-        let analysisImage = asset.mediaType == .image ? await requestQualityImage(for: asset) : nil
-        let isCloudOnly = asset.mediaType == .image && analysisImage == nil
+        // 照片路径
+        if !isVideoAsset {
+            let analysisImage = asset.mediaType == .image ? await requestQualityImage(for: asset) : nil
+            let isCloudOnly = asset.mediaType == .image && analysisImage == nil
 
-        var pHashValue: UInt64? = nil
-        var colorSignature: ColorSignature? = nil
-        var technicalQualityScore: Double? = nil
+            var pHashValue: UInt64? = nil
+            var colorSignature: ColorSignature? = nil
+            var technicalQualityScore: Double? = nil
+            var qualityIssueReason: String? = nil
+            var screenshotCat: ScreenshotCategory? = nil
+            var livePhotoVideoPHash: UInt64? = nil
+
+            if let img = analysisImage {
+                pHashValue = SimilarityDetector.computePHash(from: img)
+                colorSignature = SimilarityDetector.computeColorSignature(from: img)
+                let technicalAssessment = PhotoQualityScorer.assessTechnicalQuality(img)
+                technicalQualityScore = technicalAssessment.score
+                qualityIssueReason = technicalAssessment.issueReason
+                // 截图做内容分类（OCR + 规则匹配）
+                if isScreenshot {
+                    screenshotCat = await ScreenshotClassifier.classify(
+                        image: img,
+                        creationDate: asset.creationDate
+                    )
+                }
+            }
+
+            // Live Photo 视频部分：抽首帧 pHash，参与相似检测
+            // 让 Live Photo 能与同场景的普通视频/照片相互命中
+            if isLivePhoto, !isCloudOnly {
+                let keyframes = await VideoKeyframeExtractor.keyframeImages(for: asset, count: 1)
+                if let firstFrame = keyframes.first {
+                    livePhotoVideoPHash = SimilarityDetector.computePHash(from: firstFrame)
+                }
+            }
+
+            // 主体特征不在此处全量提取：7000 张全量跑 Vision 主体检测会拖慢扫描 1-2 分钟。
+            // 改为在相似检测分组后，只对相似组内照片提取（通常几百张），成本降一个数量级。
+            return PhotoItem(
+                id: asset.localIdentifier,
+                asset: asset,
+                md5Hash: nil,
+                pHash: pHashValue,
+                isScreenshot: isScreenshot,
+                isScreenRecording: isScreenRecording,
+                isLivePhoto: isLivePhoto,
+                isCloudOnly: isCloudOnly,
+                fileSize: fileSize,
+                creationDate: asset.creationDate,
+                pixelWidth: asset.pixelWidth,
+                pixelHeight: asset.pixelHeight,
+                colorSignature: colorSignature,
+                qualityScore: nil,
+                qualityReason: nil,
+                technicalQualityScore: technicalQualityScore,
+                qualityIssueReason: qualityIssueReason,
+                containsFace: false,
+                subjectDescriptor: nil,
+                screenshotCategory: screenshotCat,
+                livePhotoVideoPHash: livePhotoVideoPHash
+            )
+        }
+
+        // 视频路径：深度扫描关闭时不做全量抽帧，重复视频仍通过 MD5 候选确认。
+        // 抽帧主要服务视频相似和黑帧判断，MVP 默认关闭以保证大相册扫描速度。
+        let deepScan = PhotoScanner.enableVideoSimilarityScan
+        let keyframes = deepScan
+            ? await VideoKeyframeExtractor.keyframeImages(for: asset, count: VideoKeyframeExtractor.keyframeCount)
+            : []
+        let isCloudOnly = deepScan && keyframes.isEmpty
+        let duration = asset.duration > 0 ? asset.duration : nil
+
+        // pHash + 主体特征仅在深度扫描开启时计算
+        var keyframePHashes: [UInt64] = []
+        var subjectDesc: SubjectDescriptor? = nil
+        var hasFace = false
+        if deepScan {
+            keyframePHashes = keyframes.map { SimilarityDetector.computePHash(from: $0) }
+            if let firstFrame = keyframes.first {
+                subjectDesc = await SubjectDescriptorExtractor.extract(from: firstFrame)
+                hasFace = subjectDesc?.faceHistogram != nil
+            }
+        }
+
         var qualityIssueReason: String? = nil
-
-        if let img = analysisImage {
-            pHashValue = SimilarityDetector.computePHash(from: img)
-            colorSignature = SimilarityDetector.computeColorSignature(from: img)
-            let technicalAssessment = PhotoQualityScorer.assessTechnicalQuality(img)
-            technicalQualityScore = technicalAssessment.score
-            qualityIssueReason = technicalAssessment.issueReason
+        if !isCloudOnly && !isScreenRecording {
+            // 低质量视频启发式：口袋录像 / 镜头盖 / 低分辨率
+            if let duration, duration < 3 {
+                if let firstFrame = keyframes.first, VideoKeyframeExtractor.isBlackFrame(firstFrame) {
+                    qualityIssueReason = "疑似镜头盖或口袋录像"
+                } else {
+                    qualityIssueReason = "视频过短（<3秒）"
+                }
+            } else if asset.pixelWidth < 480 || asset.pixelHeight < 480 {
+                qualityIssueReason = "视频分辨率过低"
+            }
         }
 
         return PhotoItem(
             id: asset.localIdentifier,
             asset: asset,
             md5Hash: nil,
-            pHash: pHashValue,
+            pHash: nil,
             isScreenshot: isScreenshot,
             isScreenRecording: isScreenRecording,
             isLivePhoto: isLivePhoto,
@@ -511,11 +616,16 @@ final class PhotoScanner: ObservableObject {
             creationDate: asset.creationDate,
             pixelWidth: asset.pixelWidth,
             pixelHeight: asset.pixelHeight,
-            colorSignature: colorSignature,
+            colorSignature: nil,
             qualityScore: nil,
             qualityReason: nil,
-            technicalQualityScore: technicalQualityScore,
-            qualityIssueReason: qualityIssueReason
+            technicalQualityScore: nil,
+            qualityIssueReason: qualityIssueReason,
+            containsFace: hasFace,
+            keyframePHashes: keyframePHashes,
+            videoDuration: duration,
+            isVideo: true,
+            subjectDescriptor: subjectDesc
         )
     }
 
@@ -533,9 +643,91 @@ final class PhotoScanner: ObservableObject {
         }
     }
 
+    /// 只对预算内的完整相似组提取主体特征。不会截断一个组，保证高可信组内每张都完成校验。
+    private func enrichSubjectDescriptors(in photos: [PhotoItem], similarGroups: [SimilarGroup], scanID: UUID) async -> [PhotoItem] {
+        let candidateIDs = subjectValidationCandidateIDs(in: similarGroups)
+        guard !candidateIDs.isEmpty else { return photos }
+
+        let candidates = photos.filter { candidateIDs.contains($0.id) }
+        let resultMap = await computeSubjectDescriptors(for: candidates, scanID: scanID)
+
+        return photos.map { photo in
+            guard let bundle = resultMap[photo.id] else { return photo }
+            var updated = photo
+            updated.subjectDescriptor = bundle.descriptor
+            updated.containsFace = bundle.descriptor?.faceHistogram != nil
+            updated.subjectAssessmentCompleted = bundle.completed
+            return updated
+        }
+    }
+
+    private func subjectValidationCandidateIDs(in groups: [SimilarGroup]) -> Set<String> {
+        var selected = Set<String>()
+
+        for group in groups {
+            let groupIDs = Set(group.photos.map(\.id))
+            let additionalCount = groupIDs.subtracting(selected).count
+            guard selected.count + additionalCount <= PhotoScanner.maxSubjectValidationPhotos else { continue }
+            selected.formUnion(groupIDs)
+        }
+
+        return selected
+    }
+
+    private struct SubjectDescriptorBundle {
+        let descriptor: SubjectDescriptor?
+        let completed: Bool
+    }
+
+    private func computeSubjectDescriptors(for photos: [PhotoItem], scanID: UUID) async -> [String: SubjectDescriptorBundle] {
+        let maxConcurrent = 4
+        var result: [String: SubjectDescriptorBundle] = [:]
+
+        await withTaskGroup(of: (String, SubjectDescriptorBundle).self) { group in
+            var iterator = photos.makeIterator()
+            var inFlight = 0
+
+            while inFlight < maxConcurrent, let photo = iterator.next() {
+                inFlight += 1
+                group.addTask { [weak self] in
+                    guard let self else { return (photo.id, SubjectDescriptorBundle(descriptor: nil, completed: false)) }
+                    guard let image = await self.requestSubjectImage(for: photo.asset) else {
+                        return (photo.id, SubjectDescriptorBundle(descriptor: nil, completed: false))
+                    }
+                    let descriptor = await SubjectDescriptorExtractor.extract(from: image)
+                    return (photo.id, SubjectDescriptorBundle(descriptor: descriptor, completed: true))
+                }
+            }
+
+            for await (id, bundle) in group {
+                if Task.isCancelled || !isActiveScan(scanID) {
+                    group.cancelAll()
+                    break
+                }
+                inFlight -= 1
+                result[id] = bundle
+
+                if let photo = iterator.next() {
+                    inFlight += 1
+                    group.addTask { [weak self] in
+                        guard let self else { return (photo.id, SubjectDescriptorBundle(descriptor: nil, completed: false)) }
+                        guard let image = await self.requestSubjectImage(for: photo.asset) else {
+                            return (photo.id, SubjectDescriptorBundle(descriptor: nil, completed: false))
+                        }
+                        let descriptor = await SubjectDescriptorExtractor.extract(from: image)
+                        return (photo.id, SubjectDescriptorBundle(descriptor: descriptor, completed: true))
+                    }
+                }
+            }
+        }
+
+        return result
+    }
+
     private func duplicateCandidateIDs(in photos: [PhotoItem]) -> Set<String> {
-        let grouped = Dictionary(grouping: photos.filter { $0.asset.mediaType == .image && !$0.isLivePhoto && !$0.isCloudOnly && $0.fileSize > 0 }) { photo in
-            "\(photo.fileSize)-\(photo.pixelWidth)x\(photo.pixelHeight)"
+        // 媒体类型 + fileSize + 尺寸预筛，避免照片/视频/Live Photo 互相触发无效 MD5 读取。
+        let grouped = Dictionary(grouping: photos.filter { !$0.isCloudOnly && $0.fileSize > 0 }) { photo in
+            "\(duplicateMediaKind(for: photo))-\(photo.fileSize)-\(photo.pixelWidth)x\(photo.pixelHeight)"
         }
 
         return Set(
@@ -543,6 +735,12 @@ final class PhotoScanner: ObservableObject {
                 .filter { $0.count >= 2 }
                 .flatMap { $0.map(\.id) }
         )
+    }
+
+    private func duplicateMediaKind(for photo: PhotoItem) -> String {
+        if photo.isVideo { return "video" }
+        if photo.isLivePhoto { return "live" }
+        return "photo"
     }
 
     private func computeFileHashes(for photos: [PhotoItem]) async -> [String: String] {
@@ -582,10 +780,42 @@ final class PhotoScanner: ObservableObject {
 
     private nonisolated func requestFileMD5(for asset: PHAsset) async -> String? {
         let resources = PHAssetResource.assetResources(for: asset)
-        guard let resource = resources.first(where: { $0.type == .photo || $0.type == .fullSizePhoto }) ?? resources.first else {
-            return nil
-        }
 
+        if asset.mediaType == .video {
+            // 普通视频：只用 .video / .fullSizeVideo 资源，不 fallback 到封面图
+            // 加 "v:" 前缀隔离 hash 空间，避免视频封面 MD5 和照片撞车导致跨类型误判
+            guard let resource = resources.first(where: { $0.type == .video || $0.type == .fullSizeVideo }) else {
+                return nil
+            }
+            guard let md5 = await computeResourceMD5(resource) else { return nil }
+            return "v:\(md5)"
+        } else if asset.mediaSubtypes.contains(.photoLive) {
+            // Live Photo：静态照 + paired video 都计算，组合 hash
+            // 只有两者都相同才视为完全重复（保守，避免静态照相同但视频不同的误判）
+            let photoResource = resources.first(where: { $0.type == .photo || $0.type == .fullSizePhoto })
+            let videoResource = resources.first(where: { $0.type == .pairedVideo })
+
+            let p: String? = photoResource != nil ? await computeResourceMD5(photoResource!) : nil
+            let v: String? = videoResource != nil ? await computeResourceMD5(videoResource!) : nil
+
+            if let p, let v {
+                return "lp:\(p)|\(v)"
+            } else if let p {
+                return "lp:\(p)"
+            } else {
+                return v.map { "lp:\($0)" }
+            }
+        } else {
+            // 普通照片：加 "p:" 前缀，与视频 hash 空间隔离
+            guard let resource = resources.first(where: { $0.type == .photo || $0.type == .fullSizePhoto }) ?? resources.first else {
+                return nil
+            }
+            guard let md5 = await computeResourceMD5(resource) else { return nil }
+            return "p:\(md5)"
+        }
+    }
+
+    private nonisolated func computeResourceMD5(_ resource: PHAssetResource) async -> String? {
         let options = PHAssetResourceRequestOptions()
         options.isNetworkAccessAllowed = false
 
@@ -620,87 +850,65 @@ final class PhotoScanner: ObservableObject {
 
     // MARK: - 建议保留评分
 
-    private func applyQualityScores(in groups: [SimilarGroup], scanID: UUID) async -> [SimilarGroup] {
-        let assessments = await computeQualityAssessments(for: groups.flatMap(\.photos), scanID: scanID)
-
-        return groups.map { group in
+    private func groupsWithScanQuality(_ groups: [SimilarGroup]) -> [SimilarGroup] {
+        groups.map { group in
             let enriched = group.photos.map { photo -> PhotoItem in
+                guard photo.qualityScore == nil else { return photo }
                 var updated = photo
-                if let assessment = assessments[photo.id] {
-                    updated.qualityScore = assessment.score
-                    updated.qualityReason = assessment.reason
-                    updated.containsFace = assessment.containsFace
-                } else {
-                    updated.qualityScore = fallbackQualityScore(for: photo)
-                    updated.qualityReason = "建议保留"
-                    updated.containsFace = false
-                }
+                updated.qualityScore = fallbackQualityScore(for: photo)
+                updated.qualityReason = recommendationReason(for: updated)
                 return updated
             }
             return SimilarGroup(photos: enriched)
         }
     }
 
-    private func computeQualityAssessments(for photos: [PhotoItem], scanID: UUID) async -> [String: PhotoQualityScorer.Assessment] {
-        let uniquePhotos = Array(Dictionary(grouping: photos, by: \.id).compactMap { $0.value.first })
-        let maxConcurrent = 2
-        var result: [String: PhotoQualityScorer.Assessment] = [:]
-
-        await withTaskGroup(of: (String, PhotoQualityScorer.Assessment?).self) { group in
-            var iterator = uniquePhotos.makeIterator()
-            var inFlight = 0
-
-            while inFlight < maxConcurrent, let photo = iterator.next() {
-                inFlight += 1
-                group.addTask { [weak self] in
-                    guard let self else { return (photo.id, nil) }
-                    guard let image = await self.requestQualityImage(for: photo.asset) else {
-                        return (photo.id, nil)
-                    }
-                    return (photo.id, await PhotoQualityScorer.assess(image))
-                }
-            }
-
-            for await (id, assessment) in group {
-                inFlight -= 1
-
-                if Task.isCancelled || !isActiveScan(scanID) {
-                    group.cancelAll()
-                    break
-                }
-
-                if let assessment {
-                    result[id] = assessment
-                }
-
-                if let photo = iterator.next() {
-                    inFlight += 1
-                    group.addTask { [weak self] in
-                        guard let self else { return (photo.id, nil) }
-                        guard let image = await self.requestQualityImage(for: photo.asset) else {
-                            return (photo.id, nil)
-                        }
-                        return (photo.id, await PhotoQualityScorer.assess(image))
-                    }
-                }
-            }
-        }
-
-        return result
+    private func recommendationReason(for photo: PhotoItem) -> String {
+        if photo.asset.isFavorite { return "已收藏，建议保留" }
+        if photo.containsFace { return "含人脸，建议保留" }
+        if photo.technicalQualityScore ?? 0 >= 72 { return "画面质量较好，建议保留" }
+        return "建议保留"
     }
 
     private nonisolated func requestQualityImage(for asset: PHAsset) async -> UIImage? {
+        let needsOCRDetail = asset.mediaSubtypes.contains(.photoScreenshot)
+        return await requestAnalysisImage(
+            for: asset,
+            maxDimension: needsOCRDetail ? 900 : 480,
+            deliveryMode: .highQualityFormat,
+            acceptsDegradedImage: false,
+            timeoutNanoseconds: 2_000_000_000
+        )
+    }
+
+    private nonisolated func requestSubjectImage(for asset: PHAsset) async -> UIImage? {
+        await requestAnalysisImage(
+            for: asset,
+            maxDimension: 480,
+            deliveryMode: .fastFormat,
+            acceptsDegradedImage: true,
+            timeoutNanoseconds: 750_000_000
+        )
+    }
+
+    private nonisolated func requestAnalysisImage(
+        for asset: PHAsset,
+        maxDimension: CGFloat,
+        deliveryMode: PHImageRequestOptionsDeliveryMode,
+        acceptsDegradedImage: Bool,
+        timeoutNanoseconds: UInt64
+    ) async -> UIImage? {
         let options = PHImageRequestOptions()
-        options.deliveryMode = .highQualityFormat
+        options.deliveryMode = deliveryMode
         options.resizeMode = .fast
         options.isSynchronous = false
         options.isNetworkAccessAllowed = false
 
         let longestSide = max(asset.pixelWidth, asset.pixelHeight)
-        let scale = longestSide > 0 ? min(1, 900 / CGFloat(longestSide)) : 1
+        let scale = longestSide > 0 ? min(1, maxDimension / CGFloat(longestSide)) : 1
         let targetSize = CGSize(
-            width: max(320, CGFloat(asset.pixelWidth) * scale),
-            height: max(320, CGFloat(asset.pixelHeight) * scale)
+            width: max(1, CGFloat(asset.pixelWidth) * scale),
+            height: max(1, CGFloat(asset.pixelHeight) * scale)
         )
 
         return await withCheckedContinuation { continuation in
@@ -732,14 +940,16 @@ final class PhotoScanner: ObservableObject {
                     resume(nil)
                     return
                 }
-                if let degraded = info?[PHImageResultIsDegradedKey] as? Bool, degraded {
+                if !acceptsDegradedImage,
+                   let degraded = info?[PHImageResultIsDegradedKey] as? Bool,
+                   degraded {
                     return
                 }
                 resume(image)
             }
 
             Task {
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
                 let (shouldCancel, id) = stateQueue.sync {
                     (!didResume, requestID)
                 }
@@ -754,17 +964,16 @@ final class PhotoScanner: ObservableObject {
     }
 
     private func fallbackQualityScore(for photo: PhotoItem) -> Double {
+        let technicalScore = min(100, max(0, photo.technicalQualityScore ?? 50)) * 0.72
+
         let megapixels = Double(photo.pixelWidth * photo.pixelHeight) / 1_000_000
-        let resolutionScore = min(45, megapixels * 5)
+        let resolutionScore = min(12, megapixels * 1.5)
 
         let fileSizeMB = Double(photo.fileSize) / 1_048_576
-        let fileScore = min(25, fileSizeMB * 3)
+        let fileScore = min(4, fileSizeMB * 0.8)
 
-        let aspect = photo.pixelHeight == 0 ? 1 : Double(photo.pixelWidth) / Double(photo.pixelHeight)
-        let aspectScore = (0.45...2.4).contains(aspect) ? 15.0 : 8.0
-
-        let dateScore = photo.creationDate == nil ? 5.0 : 15.0
-        return min(100, resolutionScore + fileScore + aspectScore + dateScore)
+        let favoriteScore = photo.asset.isFavorite ? 12.0 : 0
+        return min(100, technicalScore + resolutionScore + fileScore + favoriteScore)
     }
 }
 

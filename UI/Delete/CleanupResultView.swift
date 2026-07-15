@@ -3,6 +3,7 @@ import SwiftUI
 /// 清理成果展示页（成就正向框架：释放 X GB ≈ 多拍 N 张自拍）
 struct CleanupResultView: View {
     let photoCount: Int
+    var videoCount: Int = 0
     let spaceFreed: Int64
     var failedCount: Int = 0
     var bucketLabel: String? = nil
@@ -11,6 +12,10 @@ struct CleanupResultView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showShareSheet = false
     @State private var confettiScale: CGFloat = 0.5
+
+    private var mediaSummary: MediaCountSummary {
+        MediaCountSummary(photoCount: photoCount, videoCount: videoCount)
+    }
 
     /// 估算"多拍多少张自拍"（按每张自拍约 5MB 估算）
     private var selfieEquivalent: Int {
@@ -72,7 +77,7 @@ struct CleanupResultView: View {
                     HStack(spacing: 20) {
                         StatCard(
                             icon: "photo.on.rectangle.angled",
-                            value: "\(photoCount)",
+                            value: "\(mediaSummary.totalCount)",
                             label: "已清理"
                         )
 
@@ -86,7 +91,7 @@ struct CleanupResultView: View {
                         }
                     }
 
-                    Text("照片已移至「最近删除」\n30 天内可恢复")
+                    Text("\(mediaSummary.countText)已移至「最近删除」\n30 天内可恢复")
                         .font(.caption)
                         .foregroundColor(.warmGray)
                         .multilineTextAlignment(.center)
@@ -137,7 +142,11 @@ struct CleanupResultView: View {
                         catHaptic(.light)
                         AnalyticsManager.shared.track(
                             .shareClicked,
-                            properties: ["photo_count": photoCount, "space_freed_mb": Int(spaceFreed / 1_048_576)]
+                            properties: [
+                                "photo_count": photoCount,
+                                "video_count": videoCount,
+                                "space_freed_mb": Int(spaceFreed / 1_048_576)
+                            ]
                         )
                         showShareSheet = true
                     }) {
@@ -164,9 +173,9 @@ struct CleanupResultView: View {
 
     private var shareText: String {
         if selfieEquivalent > 0 {
-            return "用轻猫清理了 \(photoCount) 张照片，释放 \(formatBytes(spaceFreed))，≈ 多拍 \(selfieEquivalent) 张自拍 🐱✨"
+            return "用轻猫清理了 \(mediaSummary.countText)，释放 \(formatBytes(spaceFreed))，≈ 多拍 \(selfieEquivalent) 张自拍 🐱✨"
         }
-        return "用轻猫清理了 \(photoCount) 张照片，释放 \(formatBytes(spaceFreed)) 🐱✨"
+        return "用轻猫清理了 \(mediaSummary.countText)，释放 \(formatBytes(spaceFreed)) 🐱✨"
     }
 
     private func formatBytes(_ bytes: Int64) -> String {
