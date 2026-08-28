@@ -20,7 +20,9 @@ struct ScanStartView: View {
         }
         .onAppear {
             if scanner.availableYears.isEmpty {
-                scanner.detectAvailableYears()
+                // ScanStartView 明确交给用户"选择年份 → 点开始分析"，
+                // 这里只检测年份并设置默认选中最新一年，不自动扫描。
+                scanner.detectAvailableYears(preferLatestIfUnset: true)
             }
         }
     }

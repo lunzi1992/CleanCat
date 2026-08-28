@@ -189,13 +189,13 @@ struct DuplicateGroupCard: View {
             selectedPhotos.remove(photo.id)
             AnalyticsManager.shared.track(
                 .photoDeselected,
-                properties: ["source": "duplicates", "photo_id": photo.id]
+                properties: ["source": "duplicates"]
             )
         } else {
             selectedPhotos.insert(photo.id)
             AnalyticsManager.shared.track(
                 .photoSelected,
-                properties: ["source": "duplicates", "photo_id": photo.id]
+                properties: ["source": "duplicates"]
             )
         }
     }

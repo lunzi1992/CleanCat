@@ -4,8 +4,10 @@ import SwiftUI
 struct ResultsView: View {
     let results: ScanResults
     @ObservedObject var scanner: PhotoScanner
+    @EnvironmentObject var appState: AppState
     @State private var selectedTab: ResultTab = .duplicates
     @State private var showDeleteConfirm = false
+    @State private var showPaywall = false
     @State private var selectedPhotos: Set<String> = []
     @State private var cleanupSummary: CleanupSummary?
 
@@ -48,6 +50,12 @@ struct ResultsView: View {
                     "low_quality_photos": results.lowQualityPhotos.count
                 ]
             )
+            // 结果为空时上报
+            if results.duplicateGroups.isEmpty && results.similarGroups.isEmpty &&
+               results.screenshots.isEmpty && results.screenRecordings.isEmpty &&
+               results.lowQualityPhotos.isEmpty {
+                AnalyticsManager.shared.track(.resultEmptyViewed)
+            }
         }
         .sheet(isPresented: $showDeleteConfirm) {
             DeleteConfirmView(
@@ -55,6 +63,10 @@ struct ResultsView: View {
             ) { result in
                 handleDeleteResult(result)
             }
+        }
+        .sheet(isPresented: $showPaywall) {
+            PaywallView(source: "delete_action")
+                .environmentObject(appState)
         }
         .sheet(item: $cleanupSummary) { summary in
             CleanupResultView(
@@ -252,13 +264,11 @@ struct ResultsView: View {
 
             Button(action: {
                 catHaptic(.medium)
-                AnalyticsManager.shared.track(
-                    .deleteConfirmed,
-                    properties: [
-                        "photo_count": summary.photoCount,
-                        "video_count": summary.videoCount
-                    ]
-                )
+                if appState.isFeatureLocked {
+                    // 试用已到期，弹付费墙
+                    showPaywall = true
+                    return
+                }
                 showDeleteConfirm = true
             }) {
                 Text("删除 \(summary.countText)")

@@ -57,30 +57,44 @@ final class PhotoScanner: ObservableObject {
 
     // MARK: - 年份检测
 
-    /// 检测相册中有哪些年份的照片
-    func detectAvailableYears() {
-        // 复用后台执行,完成后回主线程
+    /// 检测相册中有哪些年份的照片。
+    ///
+    /// - Parameters:
+    ///   - preferLatestIfUnset: 当 `selectedBucket == nil` 时，是否自动把「最近一年」设为当前 bucket。
+    ///   - completion: 检测完成后（且已写入 `availableYears` / `selectedBucket`）在主线程调用。调用方可以在这里决定
+    ///     要不要自动调用 `scanSelected()`。把「是否自动开始」的决策权留给调用方（MainTabView / ScanStartView），
+    ///     避免 Scanner 内部异步分支产生"明明写了自动扫但真机没触发"的时序 Bug。
+    func detectAvailableYears(
+        preferLatestIfUnset: Bool = true,
+        completion: (() -> Void)? = nil
+    ) {
         Task.detached(priority: .userInitiated) {
             let fetchOptions = PHFetchOptions()
             fetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
 
-            let allAssets = PHAsset.fetchAssets(with: fetchOptions)
             var years: Set<Int> = []
             let calendar = Calendar.current
 
-            allAssets.enumerateObjects { asset, _, _ in
-                if let date = asset.creationDate {
-                    years.insert(calendar.component(.year, from: date))
+            for mediaType in [PHAssetMediaType.image, .video] {
+                autoreleasepool {
+                    let result = PHAsset.fetchAssets(with: mediaType, options: fetchOptions)
+                    result.enumerateObjects { asset, _, _ in
+                        if let date = asset.creationDate {
+                            years.insert(calendar.component(.year, from: date))
+                        }
+                    }
                 }
             }
 
             let sorted = years.sorted(by: >)
             await MainActor.run {
                 self.availableYears = sorted
-                // 默认选最近一年
-                if self.selectedBucket == nil, let first = sorted.first {
+                if preferLatestIfUnset,
+                   self.selectedBucket == nil,
+                   let first = sorted.first {
                     self.selectedBucket = .year(first)
                 }
+                completion?()
             }
         }
     }
@@ -476,6 +490,10 @@ final class PhotoScanner: ObservableObject {
                         guard self.isActiveScan(scanID) else { return }
                         self.progress = ScanProgress(current: snapshot, total: total)
                     }
+                    AnalyticsManager.shared.track(
+                        .scanProgress,
+                        properties: ["completed": snapshot, "total": total]
+                    )
                 }
 
                 // 启动下一个任务填满流水线

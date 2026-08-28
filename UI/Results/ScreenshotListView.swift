@@ -170,13 +170,13 @@ struct ScreenshotListView: View {
             selectedPhotos.remove(photo.id)
             AnalyticsManager.shared.track(
                 .photoDeselected,
-                properties: ["source": photo.isScreenRecording ? "screen_recording" : "screenshot", "photo_id": photo.id]
+                properties: ["source": photo.isScreenRecording ? "screen_recording" : "screenshot"]
             )
         } else {
             selectedPhotos.insert(photo.id)
             AnalyticsManager.shared.track(
                 .photoSelected,
-                properties: ["source": photo.isScreenRecording ? "screen_recording" : "screenshot", "photo_id": photo.id]
+                properties: ["source": photo.isScreenRecording ? "screen_recording" : "screenshot"]
             )
         }
     }

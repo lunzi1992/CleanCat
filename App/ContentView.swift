@@ -1,8 +1,10 @@
 import SwiftUI
+import Photos
 
 /// 根视图：根据授权状态和引导完成状态决定显示哪个页面
 struct ContentView: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.scenePhase) private var scenePhase
     
     var body: some View {
         Group {
@@ -25,5 +27,10 @@ struct ContentView: View {
         .background(Color.cream.ignoresSafeArea())
         .animation(.easeInOut(duration: 0.3), value: appState.hasCompletedOnboarding)
         .animation(.easeInOut(duration: 0.3), value: appState.authorizationStatus)
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active {
+                appState.authorizationStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+            }
+        }
     }
 }

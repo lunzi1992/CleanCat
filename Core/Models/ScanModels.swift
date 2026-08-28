@@ -83,6 +83,13 @@ struct ScanResults {
             return SimilarGroup(photos: remaining)
         }
 
+        let deletedLivePhotos = (screenshots + screenRecordings + lowQualityPhotos).filter {
+            deletedIDs.contains($0.id) && $0.isLivePhoto
+        }.count
+        let deletedCloudOnly = (screenshots + screenRecordings + lowQualityPhotos).filter {
+            deletedIDs.contains($0.id) && $0.isCloudOnly
+        }.count
+
         return ScanResults(
             totalPhotoCount: max(0, totalPhotoCount - deletedIDs.count),
             duplicateGroups: duplicates,
@@ -90,8 +97,8 @@ struct ScanResults {
             screenshots: screenshots.filter { !deletedIDs.contains($0.id) },
             screenRecordings: screenRecordings.filter { !deletedIDs.contains($0.id) },
             lowQualityPhotos: lowQualityPhotos.filter { !deletedIDs.contains($0.id) },
-            cloudOnlyPhotoCount: cloudOnlyPhotoCount,
-            livePhotoCount: livePhotoCount,
+            cloudOnlyPhotoCount: max(0, cloudOnlyPhotoCount - deletedCloudOnly),
+            livePhotoCount: max(0, livePhotoCount - deletedLivePhotos),
             scanDuration: scanDuration
         )
     }

@@ -30,7 +30,11 @@ struct OnboardingView: View {
                     Button(action: {
                         catImpact(page == 2 ? .medium : .light)
                         if page < 2 { page += 1 }
-                        else { appState.hasCompletedOnboarding = true }
+                        else {
+                            AnalyticsManager.shared.track(.onboardingCompleted)
+                            appState.startTrial()
+                            appState.hasCompletedOnboarding = true
+                        }
                     }) {
                         Text(page < 2 ? "下一步" : "开始使用轻猫")
                     }

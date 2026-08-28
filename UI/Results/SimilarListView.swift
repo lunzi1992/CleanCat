@@ -1,16 +1,13 @@
 import SwiftUI
 
 /// 相似照片列表
-/// PRD V1.1 REQ-010: 前 10 组显示建议保留,其余组仍可手动检查
+/// 试用/付费机制：7天试用全功能，到期后保留建议需付费
 struct SimilarListView: View {
     let groups: [SimilarGroup]
     @Binding var selectedPhotos: Set<String>
     let protectedPhotoIDs: Set<String>
     @EnvironmentObject var appState: AppState
-    @State private var didTrackPreviewExhausted = false
-
-    /// MVP 阈值:前 10 组显示建议保留,其余组只做手动检查
-    private let freeThreshold = 10
+    @State private var showPaywall = false
 
     var body: some View {
         ScrollView {
@@ -22,27 +19,18 @@ struct SimilarListView: View {
                         subtitle: "这一年保留下来的都挺不一样"
                     )
                 } else {
-                    if appState.isPro {
-                        Button(action: handleBestSelection) {
-                            HStack {
-                                Image(systemName: "sparkles")
-                                Text("保留建议，选中其余")
-                                Spacer()
-                                Text("\(totalDeletableCount()) 张")
-                                    .foregroundColor(.secondary)
-                            }
-                            .font(.subheadline)
-                            .padding(12)
-                            .background(Color.sage.opacity(0.12))
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
-                        }
-                    } else {
+                    Button(action: handleBestSelection) {
                         HStack {
                             Image(systemName: "sparkles")
-                            Text("前 10 组显示建议保留")
+                            Text("保留建议，选中其余")
                             Spacer()
-                            Text("其余可手动检查")
-                                .foregroundColor(.secondary)
+                            if appState.hasFullAccess {
+                                Text("\(totalDeletableCount()) 张")
+                                    .foregroundColor(.secondary)
+                            } else {
+                                Image(systemName: "lock.fill")
+                                    .foregroundColor(.appDanger)
+                            }
                         }
                         .font(.subheadline)
                         .padding(12)
@@ -55,36 +43,30 @@ struct SimilarListView: View {
                             group: group,
                             selectedPhotos: $selectedPhotos,
                             protectedPhotoIDs: protectedPhotoIDs,
-                            showsBestRecommendation: appState.isPro || index < freeThreshold,
-                            lockedReason: (!appState.isPro && index >= freeThreshold) ? "手动检查" : nil
+                            showsBestRecommendation: appState.hasFullAccess,
+                            lockedReason: nil
                         )
-                        .onAppear {
-                            if !appState.isPro && index == freeThreshold && !didTrackPreviewExhausted {
-                                didTrackPreviewExhausted = true
-                                AnalyticsManager.shared.track(
-                                    .bestPhotoPreviewExhausted,
-                                    properties: ["free_group_count": freeThreshold, "group_count": groups.count]
-                                )
-                            }
-                        }
-                    }
-
-                    if !appState.isPro && groups.count > freeThreshold {
-                        Text("前 10 组显示建议保留；后续组仍可展开、预览和手动选择删除，但不标记建议保留。")
-                            .font(.caption)
-                            .foregroundColor(.warmGray)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 12)
                     }
                 }
             }
             .padding(16)
         }
+        .sheet(isPresented: $showPaywall) {
+            PaywallView(source: "similar_best_selection")
+                .environmentObject(appState)
+        }
     }
 
     private func handleBestSelection() {
-        if appState.isPro {
+        if appState.hasFullAccess {
             selectAllExceptBest()
+        } else {
+            catHaptic(.light)
+            AnalyticsManager.shared.track(
+                .bestPhotoPreviewExhausted,
+                properties: ["reason": "feature_locked", "group_count": groups.count]
+            )
+            showPaywall = true
         }
     }
 
@@ -271,13 +253,13 @@ struct SimilarGroupCard: View {
             selectedPhotos.remove(photo.id)
             AnalyticsManager.shared.track(
                 .photoDeselected,
-                properties: ["source": "similar", "photo_id": photo.id]
+                properties: ["source": "similar"]
             )
         } else {
             selectedPhotos.insert(photo.id)
             AnalyticsManager.shared.track(
                 .photoSelected,
-                properties: ["source": "similar", "photo_id": photo.id]
+                properties: ["source": "similar"]
             )
         }
     }

@@ -108,6 +108,7 @@ struct DeleteConfirmView: View {
                 .disabled(isDeleting)
 
                 Button("取消") {
+                    AnalyticsManager.shared.track(.deleteCancelled, properties: ["reason": "user_cancelled"])
                     dismiss()
                 }
                 .font(.subheadline)
@@ -167,6 +168,14 @@ struct DeleteConfirmView: View {
     // MARK: - 动作
 
     private func startFarewell() {
+        let summary = mediaSummary
+        AnalyticsManager.shared.track(
+            .deleteConfirmed,
+            properties: [
+                "photo_count": summary.photoCount,
+                "video_count": summary.videoCount
+            ]
+        )
         withAnimation(.easeInOut(duration: 0.3)) {
             showFarewell = true
         }
